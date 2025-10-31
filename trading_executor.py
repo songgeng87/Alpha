@@ -1,0 +1,474 @@
+"""
+交易执行模块
+负责实际的交易执行、仓位管理和止损单管理
+"""
+import requests
+import time
+import hmac
+import hashlib
+from typing import Dict, List, Optional
+from urllib.parse import urlencode
+
+
+class TradingExecutor:
+    """交易执行器，负责执行交易指令"""
+    
+    def __init__(self, exchange_config: Dict, confidence_threshold: float = 0.6):
+        """
+        初始化交易执行器
+        
+        Args:
+            exchange_config: 交易所配置
+            confidence_threshold: 信心阈值，低于此值的交易不执行
+        """
+        self.api_key = exchange_config.get('api_key')
+        self.api_secret = exchange_config.get('api_secret')
+        self.testnet = exchange_config.get('testnet', True)
+        self.confidence_threshold = confidence_threshold
+        
+        # 设置API基础URL
+        if self.testnet:
+            self.base_url = "https://testnet.binancefuture.com"
+        else:
+            self.base_url = "https://fapi.binance.com"
+        
+        # 存储活跃仓位及其止损单
+        self.active_positions = {}  # {symbol: position_info}
+    
+    def _generate_signature(self, params: Dict) -> str:
+        """
+        生成API签名
+        
+        Args:
+            params: 请求参数
+            
+        Returns:
+            签名字符串
+        """
+        query_string = urlencode(params)
+        signature = hmac.new(
+            self.api_secret.encode('utf-8'),
+            query_string.encode('utf-8'),
+            hashlib.sha256
+        ).hexdigest()
+        return signature
+    
+    def _send_signed_request(self, method: str, endpoint: str, params: Dict) -> Optional[Dict]:
+        """
+        发送需要签名的请求
+        
+        Args:
+            method: HTTP方法（GET, POST等）
+            endpoint: API端点
+            params: 请求参数
+            
+        Returns:
+            响应数据
+        """
+        params['timestamp'] = int(time.time() * 1000)
+        params['signature'] = self._generate_signature(params)
+        
+        headers = {
+            'X-MBX-APIKEY': self.api_key
+        }
+        
+        url = f"{self.base_url}{endpoint}"
+        
+        try:
+            if method == 'GET':
+                response = requests.get(url, params=params, headers=headers, timeout=10)
+            elif method == 'POST':
+                response = requests.post(url, params=params, headers=headers, timeout=10)
+            elif method == 'DELETE':
+                response = requests.delete(url, params=params, headers=headers, timeout=10)
+            else:
+                print(f"不支持的HTTP方法: {method}")
+                return None
+            
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            print(f"API请求失败: {e}")
+            return None
+    
+    def get_position_info(self, symbol: str) -> Optional[Dict]:
+        """
+        获取指定交易对的仓位信息
+        
+        Args:
+            symbol: 交易对符号
+            
+        Returns:
+            仓位信息
+        """
+        endpoint = "/fapi/v2/positionRisk"
+        params = {}
+        
+        result = self._send_signed_request('GET', endpoint, params)
+        
+        if result:
+            for position in result:
+                if position['symbol'] == symbol:
+                    return position
+        
+        return None
+    
+    def set_leverage(self, symbol: str, leverage: int) -> bool:
+        """
+        设置杠杆倍数
+        
+        Args:
+            symbol: 交易对符号
+            leverage: 杠杆倍数
+            
+        Returns:
+            是否成功
+        """
+        endpoint = "/fapi/v1/leverage"
+        params = {
+            'symbol': symbol,
+            'leverage': leverage
+        }
+        
+        result = self._send_signed_request('POST', endpoint, params)
+        
+        if result:
+            print(f"设置 {symbol} 杠杆为 {leverage}x 成功")
+            return True
+        else:
+            print(f"设置 {symbol} 杠杆失败")
+            return False
+    
+    def place_market_order(self, symbol: str, side: str, quantity: float) -> Optional[Dict]:
+        """
+        下市价单
+        
+        Args:
+            symbol: 交易对符号
+            side: 买卖方向（BUY/SELL）
+            quantity: 数量
+            
+        Returns:
+            订单信息
+        """
+        endpoint = "/fapi/v1/order"
+        params = {
+            'symbol': symbol,
+            'side': side,
+            'type': 'MARKET',
+            'quantity': quantity
+        }
+        
+        result = self._send_signed_request('POST', endpoint, params)
+        
+        if result:
+            print(f"市价单执行成功: {symbol} {side} {quantity}")
+            return result
+        else:
+            print(f"市价单执行失败: {symbol} {side} {quantity}")
+            return None
+    
+    def place_stop_loss_order(self, symbol: str, side: str, quantity: float, 
+                             stop_price: float) -> Optional[Dict]:
+        """
+        下止损单
+        
+        Args:
+            symbol: 交易对符号
+            side: 买卖方向（BUY/SELL）
+            quantity: 数量
+            stop_price: 止损价格
+            
+        Returns:
+            订单信息
+        """
+        endpoint = "/fapi/v1/order"
+        params = {
+            'symbol': symbol,
+            'side': side,
+            'type': 'STOP_MARKET',
+            'stopPrice': stop_price,
+            'closePosition': 'true'  # 直接平仓
+        }
+        
+        result = self._send_signed_request('POST', endpoint, params)
+        
+        if result:
+            print(f"止损单设置成功: {symbol} {side} @ {stop_price}")
+            return result
+        else:
+            print(f"止损单设置失败: {symbol} {side} @ {stop_price}")
+            return None
+    
+    def cancel_order(self, symbol: str, order_id: int) -> bool:
+        """
+        取消订单
+        
+        Args:
+            symbol: 交易对符号
+            order_id: 订单ID
+            
+        Returns:
+            是否成功
+        """
+        endpoint = "/fapi/v1/order"
+        params = {
+            'symbol': symbol,
+            'orderId': order_id
+        }
+        
+        result = self._send_signed_request('DELETE', endpoint, params)
+        
+        if result:
+            print(f"订单 {order_id} 取消成功")
+            return True
+        else:
+            print(f"订单 {order_id} 取消失败")
+            return False
+    
+    def cancel_all_stop_loss_orders(self, symbol: str) -> bool:
+        """
+        取消指定交易对的所有止损单
+        
+        Args:
+            symbol: 交易对符号
+            
+        Returns:
+            是否成功
+        """
+        # 获取所有未成交订单
+        endpoint = "/fapi/v1/openOrders"
+        params = {'symbol': symbol}
+        
+        orders = self._send_signed_request('GET', endpoint, params)
+        
+        if not orders:
+            return True
+        
+        # 取消所有止损单
+        success = True
+        for order in orders:
+            if order.get('type') in ['STOP_MARKET', 'STOP']:
+                if not self.cancel_order(symbol, order['orderId']):
+                    success = False
+        
+        return success
+    
+    def execute_open_position(self, trade: Dict, available_cash: float) -> bool:
+        """
+        执行开仓操作
+        
+        Args:
+            trade: 交易指令
+            available_cash: 可用资金
+            
+        Returns:
+            是否成功
+        """
+        symbol = trade['symbol']
+        direction = trade['direction']  # LONG or SHORT
+        leverage = int(trade['leverage'])
+        position_size_percent = trade['position_size_percent']
+        stop_loss = trade['stop_loss']
+        
+        # 设置杠杆
+        if not self.set_leverage(symbol, leverage):
+            return False
+        
+        # 计算仓位大小
+        position_value = available_cash * position_size_percent * leverage
+        
+        # 获取当前价格来计算数量
+        # 这里简化处理，实际应该获取最新价格
+        entry_price = trade.get('entry_price_target', 0)
+        if entry_price <= 0:
+            print(f"无效的入场价格: {entry_price}")
+            return False
+        
+        quantity = position_value / entry_price
+        
+        # 下市价单开仓
+        side = 'BUY' if direction == 'LONG' else 'SELL'
+        order = self.place_market_order(symbol, side, quantity)
+        
+        if not order:
+            return False
+        
+        # 设置止损单
+        stop_side = 'SELL' if direction == 'LONG' else 'BUY'
+        stop_order = self.place_stop_loss_order(symbol, stop_side, quantity, stop_loss)
+        
+        # 记录仓位信息
+        self.active_positions[symbol] = {
+            'direction': direction,
+            'quantity': quantity,
+            'entry_price': entry_price,
+            'stop_loss': stop_loss,
+            'leverage': leverage,
+            'stop_order_id': stop_order['orderId'] if stop_order else None
+        }
+        
+        return True
+    
+    def execute_close_position(self, trade: Dict) -> bool:
+        """
+        执行平仓操作
+        
+        Args:
+            trade: 交易指令
+            
+        Returns:
+            是否成功
+        """
+        symbol = trade['symbol']
+        
+        # 检查是否有仓位
+        if symbol not in self.active_positions:
+            print(f"没有 {symbol} 的活跃仓位")
+            return False
+        
+        position = self.active_positions[symbol]
+        
+        # 取消止损单
+        if position.get('stop_order_id'):
+            self.cancel_order(symbol, position['stop_order_id'])
+        
+        # 平仓
+        direction = position['direction']
+        quantity = position['quantity']
+        side = 'SELL' if direction == 'LONG' else 'BUY'
+        
+        order = self.place_market_order(symbol, side, quantity)
+        
+        if order:
+            # 从活跃仓位中移除
+            del self.active_positions[symbol]
+            return True
+        
+        return False
+    
+    def execute_trades(self, trades: List[Dict], available_cash: float) -> Dict:
+        """
+        执行一组交易指令
+        
+        Args:
+            trades: 交易指令列表
+            available_cash: 可用资金
+            
+        Returns:
+            执行结果统计
+        """
+        results = {
+            'total': len(trades),
+            'executed': 0,
+            'skipped_low_confidence': 0,
+            'failed': 0,
+            'details': []
+        }
+        
+        for trade in trades:
+            symbol = trade.get('symbol', 'UNKNOWN')
+            action = trade.get('action', 'UNKNOWN')
+            confidence = trade.get('confidence', 0)
+            
+            print(f"\n处理交易: {symbol} - {action} (信心度: {confidence:.2f})")
+            
+            # 检查信心度
+            if confidence < self.confidence_threshold:
+                print(f"信心度 {confidence:.2f} 低于阈值 {self.confidence_threshold}，跳过")
+                results['skipped_low_confidence'] += 1
+                results['details'].append({
+                    'symbol': symbol,
+                    'action': action,
+                    'status': 'skipped_low_confidence'
+                })
+                continue
+            
+            # 检查是否为亏损状态下的平仓（根据需求，亏损时不平仓）
+            if action == 'CLOSE' and symbol in self.active_positions:
+                position = self.active_positions[symbol]
+                current_price = trade.get('entry_price_target', position['entry_price'])
+                entry_price = position['entry_price']
+                direction = position['direction']
+                
+                # 判断是否亏损
+                is_loss = False
+                if direction == 'LONG' and current_price < entry_price:
+                    is_loss = True
+                elif direction == 'SHORT' and current_price > entry_price:
+                    is_loss = True
+                
+                if is_loss:
+                    print(f"当前持仓亏损，不执行平仓操作")
+                    results['skipped_low_confidence'] += 1
+                    results['details'].append({
+                        'symbol': symbol,
+                        'action': action,
+                        'status': 'skipped_loss_position'
+                    })
+                    continue
+            
+            # 执行交易
+            success = False
+            
+            if action == 'OPEN':
+                success = self.execute_open_position(trade, available_cash)
+            elif action == 'CLOSE':
+                success = self.execute_close_position(trade)
+            elif action == 'HOLD':
+                print(f"保持 {symbol} 仓位")
+                success = True
+            elif action in ['BP', 'SP']:
+                # 突破交易，类似开仓
+                print(f"执行突破交易: {action}")
+                success = self.execute_open_position(trade, available_cash)
+            else:
+                print(f"未知的交易动作: {action}")
+            
+            if success:
+                results['executed'] += 1
+                results['details'].append({
+                    'symbol': symbol,
+                    'action': action,
+                    'status': 'success'
+                })
+            else:
+                results['failed'] += 1
+                results['details'].append({
+                    'symbol': symbol,
+                    'action': action,
+                    'status': 'failed'
+                })
+        
+        return results
+    
+    def get_active_positions_summary(self) -> str:
+        """
+        获取当前活跃仓位摘要
+        
+        Returns:
+            仓位摘要文本
+        """
+        if not self.active_positions:
+            return "当前无活跃仓位"
+        
+        summary = "当前活跃仓位:\n"
+        for symbol, position in self.active_positions.items():
+            summary += f"  {symbol}: {position['direction']} "
+            summary += f"{position['quantity']:.4f} @ {position['entry_price']:.2f} "
+            summary += f"(杠杆: {position['leverage']}x, 止损: {position['stop_loss']:.2f})\n"
+        
+        return summary
+
+
+if __name__ == "__main__":
+    # 测试代码
+    test_config = {
+        'api_key': 'test',
+        'api_secret': 'test',
+        'testnet': True
+    }
+    
+    executor = TradingExecutor(test_config, confidence_threshold=0.6)
+    print("交易执行器已初始化")
+    print(f"信心阈值: {executor.confidence_threshold}")

@@ -1,0 +1,46 @@
+{
+    "trading_pairs": [
+        {
+            "symbol": "BTCUSDT",
+            "short_interval": "3m",
+            "long_interval": "4h",
+            "kline_limit": 100
+        },
+        {
+            "symbol": "ETHUSDT",
+            "short_interval": "3m",
+            "long_interval": "4h",
+            "kline_limit": 100
+        }
+    ],
+    "ai_models": [
+        {
+            "name": "GPT-4",
+            "api_url": "https://api.openai.com/v1/chat/completions",
+            "api_key": "YOUR_API_KEY_HERE",
+            "model": "gpt-4"
+        },
+        {
+            "name": "GPT-3.5",
+            "api_url": "https://api.openai.com/v1/chat/completions",
+            "api_key": "YOUR_API_KEY_HERE",
+            "model": "gpt-3.5-turbo"
+        }
+    ],
+    "exchange": {
+        "api_key": "YOUR_EXCHANGE_API_KEY",
+        "api_secret": "YOUR_EXCHANGE_API_SECRET",
+        "testnet": true
+    },
+    "trading_settings": {
+        "confidence_threshold": 0.6,
+        "max_positions": 3,
+        "leverage_range": [5, 10],
+        "position_size_range": [0.05, 0.10]
+    },
+    "system": {
+        "start_time": null,
+        "invocation_count": 0,
+        "invocation_count_file": "invocation_count.txt"
+    }
+}
