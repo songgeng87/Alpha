@@ -1,3 +1,39 @@
+    def sync_positions_from_exchange(self):
+        """
+        同步交易所真实持仓到 active_positions, 清理已平仓的本地记录。
+        只保留 positionAmt != 0 的持仓, 并用最新 entryPrice/杠杆等信息覆盖。
+        """
+        endpoint = "/fapi/v2/positionRisk"
+        result = self._send_signed_request('GET', endpoint, {})
+        if not isinstance(result, list):
+            print("同步持仓失败: 交易所返回异常")
+            return
+        new_positions = {}
+        for pos in result:
+            try:
+                amt = float(pos.get('positionAmt', '0'))
+            except Exception:
+                amt = 0.0
+            if abs(amt) < 1e-12:
+                continue
+            symbol = pos.get('symbol')
+            direction = 'LONG' if amt > 0 else 'SHORT'
+            entry_price = float(pos.get('entryPrice', '0'))
+            leverage = int(float(pos.get('leverage', '1')))
+            # 止损单ID无法直接同步, 仅保留核心信息
+            new_positions[symbol] = {
+                'direction': direction,
+                'quantity': abs(amt),
+                'entry_price': entry_price,
+                'stop_loss': 0.0,
+                'leverage': leverage,
+                'stop_order_id': None
+            }
+        # 清理本地已平仓的 symbol
+        stale = set(self.active_positions) - set(new_positions)
+        for s in stale:
+            print(f"本地持仓 {s} 已在交易所被平仓, 自动清理内存记录")
+        self.active_positions = new_positions
 """
 交易执行模块
 负责实际的交易执行、仓位管理和止损单管理
@@ -590,7 +626,9 @@ class TradingExecutor:
             'details': []
         }
         
-        for trade in trades:
+    # 决策前同步一次真实持仓
+    self.sync_positions_from_exchange()
+    for trade in trades:
             symbol = trade.get('symbol', 'UNKNOWN')
             action = trade.get('action', 'UNKNOWN')
             confidence = trade.get('confidence', 0)
