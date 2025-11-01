@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI加密货币交易建议</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 40px;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .card {
+            background: white;
+            border-radius: 16px;
+            padding: 30px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            margin-bottom: 30px;
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+        }
+
+        .form-group label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #333;
+            font-size: 0.95em;
+        }
+
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1em;
+            transition: all 0.3s;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .checkbox-group {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 12px;
+            margin-top: 12px;
+        }
+
+        .checkbox-item {
+            display: flex;
+            align-items: center;
+        }
+
+        .checkbox-item input[type="checkbox"] {
+            width: auto;
+            margin-right: 8px;
+            cursor: pointer;
+        }
+
+        .checkbox-item label {
+            margin: 0;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 16px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .loading::after {
+            content: '...';
+            animation: dots 1.5s infinite;
+        }
+
+        @keyframes dots {
+            0%, 20% { content: '.'; }
+            40% { content: '..'; }
+            60%, 100% { content: '...'; }
+        }
+
+        .result-card {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+
+        .result-header h3 {
+            color: #667eea;
+            font-size: 1.3em;
+        }
+
+        .badge {
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: 600;
+        }
+
+        .badge-success {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .analysis {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border-left: 4px solid #667eea;
+        }
+
+        .analysis-title {
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: #333;
+        }
+
+        .trades-grid {
+            display: grid;
+            gap: 15px;
+        }
+
+        .trade-item {
+            background: white;
+            border-radius: 8px;
+            padding: 15px;
+            border-left: 4px solid #ddd;
+        }
+
+        .trade-item.action-OPEN { border-left-color: #28a745; }
+        .trade-item.action-CLOSE { border-left-color: #dc3545; }
+        .trade-item.action-HOLD { border-left-color: #ffc107; }
+
+        .trade-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .trade-symbol {
+            font-size: 1.2em;
+            font-weight: 700;
+            color: #333;
+        }
+
+        .trade-action {
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-weight: 600;
+            font-size: 0.85em;
+        }
+
+        .action-OPEN { background: #d4edda; color: #155724; }
+        .action-CLOSE { background: #f8d7da; color: #721c24; }
+        .action-HOLD { background: #fff3cd; color: #856404; }
+
+        .trade-details {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin-top: 12px;
+        }
+
+        .trade-detail {
+            font-size: 0.9em;
+        }
+
+        .trade-detail-label {
+            color: #666;
+            font-size: 0.85em;
+        }
+
+        .trade-detail-value {
+            font-weight: 600;
+            color: #333;
+        }
+
+        .confidence-bar {
+            height: 8px;
+            background: #e0e0e0;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+
+        .confidence-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #28a745, #ffc107, #dc3545);
+            transition: width 0.3s;
+        }
+
+        .trade-reason {
+            margin-top: 12px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            font-size: 0.9em;
+            color: #555;
+            font-style: italic;
+        }
+
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #dc3545;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+        }
+
+        .empty-state-icon {
+            font-size: 3em;
+            margin-bottom: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 AI加密货币交易建议</h1>
+            <p>基于技术指标的智能交易分析</p>
+        </div>
+
+        <div class="card">
+            <form id="adviceForm">
+                <div class="form-group">
+                    <label>选择交易对</label>
+                    <div class="checkbox-group" id="symbolsGroup">
+                        <!-- 动态加载 -->
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="shortInterval">短期时间周期</label>
+                    <select id="shortInterval" name="shortInterval" required>
+                        <option value="">请选择</option>
+                        <option value="1m">1分钟</option>
+                        <option value="3m" selected>3分钟</option>
+                        <option value="5m">5分钟</option>
+                        <option value="15m">15分钟</option>
+                        <option value="30m">30分钟</option>
+                        <option value="1h">1小时</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="longInterval">长期时间周期</label>
+                    <select id="longInterval" name="longInterval" required>
+                        <option value="">请选择</option>
+                        <option value="1h">1小时</option>
+                        <option value="2h">2小时</option>
+                        <option value="4h" selected>4小时</option>
+                        <option value="6h">6小时</option>
+                        <option value="12h">12小时</option>
+                        <option value="1d">1天</option>
+                    </select>
+                </div>
+
+                <button type="submit" class="btn" id="submitBtn">
+                    获取AI建议
+                </button>
+            </form>
+        </div>
+
+        <div id="results"></div>
+    </div>
+
+    <script>
+        // API基础URL
+        const API_BASE = window.location.origin;
+
+        // 页面加载时获取可用交易对
+        async function loadAvailableSymbols() {
+            try {
+                const response = await fetch(`${API_BASE}/api/available_symbols`);
+                const data = await response.json();
+                
+                if (data.success && data.symbols) {
+                    const symbolsGroup = document.getElementById('symbolsGroup');
+                    symbolsGroup.innerHTML = data.symbols.map(symbol => `
+                        <div class="checkbox-item">
+                            <input type="checkbox" id="symbol_${symbol}" value="${symbol}">
+                            <label for="symbol_${symbol}">${symbol}</label>
+                        </div>
+                    `).join('');
+                    
+                    // 默认选中前两个
+                    if (data.symbols.length > 0) {
+                        document.getElementById(`symbol_${data.symbols[0]}`).checked = true;
+                    }
+                    if (data.symbols.length > 1) {
+                        document.getElementById(`symbol_${data.symbols[1]}`).checked = true;
+                    }
+                }
+            } catch (error) {
+                console.error('加载交易对失败:', error);
+            }
+        }
+
+        // 表单提交处理
+        document.getElementById('adviceForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const submitBtn = document.getElementById('submitBtn');
+            const resultsDiv = document.getElementById('results');
+            
+            // 获取选中的交易对
+            const checkboxes = document.querySelectorAll('#symbolsGroup input[type="checkbox"]:checked');
+            const symbols = Array.from(checkboxes).map(cb => cb.value);
+            
+            if (symbols.length === 0) {
+                alert('请至少选择一个交易对');
+                return;
+            }
+            
+            const shortInterval = document.getElementById('shortInterval').value;
+            const longInterval = document.getElementById('longInterval').value;
+            
+            // 显示加载状态
+            submitBtn.disabled = true;
+            submitBtn.textContent = '正在获取AI建议';
+            resultsDiv.innerHTML = '<div class="card loading">正在分析市场数据并咨询AI</div>';
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/get_advice`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        symbols: symbols,
+                        short_interval: shortInterval,
+                        long_interval: longInterval,
+                        kline_limit: 1000
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    displayResults(data);
+                } else {
+                    resultsDiv.innerHTML = `
+                        <div class="card">
+                            <div class="error">
+                                <strong>错误:</strong> ${data.error}
+                            </div>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                resultsDiv.innerHTML = `
+                    <div class="card">
+                        <div class="error">
+                            <strong>请求失败:</strong> ${error.message}
+                        </div>
+                    </div>
+                `;
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = '获取AI建议';
+            }
+        });
+
+        // 显示结果
+        function displayResults(data) {
+            const resultsDiv = document.getElementById('results');
+            
+            if (!data.decisions || data.decisions.length === 0) {
+                resultsDiv.innerHTML = `
+                    <div class="card">
+                        <div class="empty-state">
+                            <div class="empty-state-icon">🤔</div>
+                            <p>AI未返回任何建议</p>
+                        </div>
+                    </div>
+                `;
+                return;
+            }
+            
+            const html = data.decisions.map(decision => {
+                const trades = decision.trades || [];
+                
+                return `
+                    <div class="card result-card">
+                        <div class="result-header">
+                            <h3>📊 ${decision.ai_name}</h3>
+                            <span class="badge badge-success">${data.symbols.join(', ')}</span>
+                        </div>
+                        
+                        <div class="analysis">
+                            <div class="analysis-title">市场分析</div>
+                            <p>${decision.analysis || '无分析内容'}</p>
+                        </div>
+                        
+                        ${trades.length > 0 ? `
+                            <div class="trades-grid">
+                                ${trades.map(trade => `
+                                    <div class="trade-item action-${trade.action}">
+                                        <div class="trade-header">
+                                            <span class="trade-symbol">${trade.symbol}</span>
+                                            <span class="trade-action action-${trade.action}">${trade.action}</span>
+                                        </div>
+                                        
+                                        <div class="trade-details">
+                                            ${trade.direction ? `
+                                                <div class="trade-detail">
+                                                    <div class="trade-detail-label">方向</div>
+                                                    <div class="trade-detail-value">${trade.direction}</div>
+                                                </div>
+                                            ` : ''}
+                                            
+                                            ${trade.leverage ? `
+                                                <div class="trade-detail">
+                                                    <div class="trade-detail-label">杠杆</div>
+                                                    <div class="trade-detail-value">${trade.leverage}x</div>
+                                                </div>
+                                            ` : ''}
+                                            
+                                            ${trade.position_size_percent ? `
+                                                <div class="trade-detail">
+                                                    <div class="trade-detail-label">仓位</div>
+                                                    <div class="trade-detail-value">${(trade.position_size_percent * 100).toFixed(1)}%</div>
+                                                </div>
+                                            ` : ''}
+                                            
+                                            ${trade.stop_loss ? `
+                                                <div class="trade-detail">
+                                                    <div class="trade-detail-label">止损</div>
+                                                    <div class="trade-detail-value">${trade.stop_loss}</div>
+                                                </div>
+                                            ` : ''}
+                                        </div>
+                                        
+                                        <div class="confidence-bar">
+                                            <div class="confidence-fill" style="width: ${(trade.confidence * 100)}%"></div>
+                                        </div>
+                                        <div style="text-align: right; font-size: 0.85em; color: #666; margin-top: 4px;">
+                                            信心度: ${(trade.confidence * 100).toFixed(0)}%
+                                        </div>
+                                        
+                                        ${trade.reason ? `
+                                            <div class="trade-reason">
+                                                ${trade.reason}
+                                            </div>
+                                        ` : ''}
+                                    </div>
+                                `).join('')}
+                            </div>
+                        ` : '<p style="text-align: center; color: #999;">暂无交易建议</p>'}
+                    </div>
+                `;
+            }).join('');
+            
+            resultsDiv.innerHTML = html;
+        }
+
+        // 页面加载时初始化
+        loadAvailableSymbols();
+    </script>
+</body>
+</html>

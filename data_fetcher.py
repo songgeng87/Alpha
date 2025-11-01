@@ -59,19 +59,22 @@ class DataFetcher:
         if not self.api_key or not self.api_secret:
             print("缺少交易所API凭证，无法调用签名接口。请设置环境变量 EXCHANGE_API_KEY 与 EXCHANGE_API_SECRET。")
             return {"code": -1, "msg": "MISSING_API_CREDENTIALS"}
-        if params is None:
-            params = {}
+        
+        # 保存原始参数，避免重试时参数被污染
+        original_params = params.copy() if params else {}
         # 默认添加较大的 recvWindow 提高容错
-        if 'recvWindow' not in params:
-            params['recvWindow'] = 5000
+        if 'recvWindow' not in original_params:
+            original_params['recvWindow'] = 5000
         
         max_retries = 3
         retry_delay = 2
         
         for attempt in range(max_retries):
             try:
-                params['timestamp'] = int(time.time() * 1000)
-                params['signature'] = self._generate_signature(params)
+                # 每次重试使用原始参数的新副本
+                request_params = original_params.copy()
+                request_params['timestamp'] = int(time.time() * 1000)
+                request_params['signature'] = self._generate_signature(request_params)
 
                 headers = {
                     'X-MBX-APIKEY': self.api_key
@@ -80,11 +83,11 @@ class DataFetcher:
                 url = f"{self.base_url}{endpoint}"
                 
                 if method == 'GET':
-                    r = requests.get(url, params=params, headers=headers, timeout=30)
+                    r = requests.get(url, params=request_params, headers=headers, timeout=30)
                 elif method == 'POST':
-                    r = requests.post(url, params=params, headers=headers, timeout=30)
+                    r = requests.post(url, params=request_params, headers=headers, timeout=30)
                 elif method == 'DELETE':
-                    r = requests.delete(url, params=params, headers=headers, timeout=30)
+                    r = requests.delete(url, params=request_params, headers=headers, timeout=30)
                 else:
                     raise ValueError(f"Unsupported HTTP method: {method}")
                     

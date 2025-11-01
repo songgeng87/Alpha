@@ -83,8 +83,10 @@ class TradingExecutor:
 
     def _normalize_quantity(self, symbol: str, qty: float, price: float) -> float:
         """根据交易规则规范化下单数量，满足步长、最小数量、最小名义金额等"""
+        original_qty = qty
         info = self._get_symbol_info(symbol)
         if not info:
+            print(f"警告: 无法获取 {symbol} 的交易规则，使用原始数量")
             return qty
         filters = info.get('filters_map', {})
 
@@ -118,9 +120,15 @@ class TradingExecutor:
         if isinstance(q_prec, int):
             qty = self._round_to_precision(qty, q_prec)
 
+        # 打印规范化信息
+        if abs(original_qty - qty) > 0.0001:
+            print(f"数量规范化: {symbol} {original_qty:.8f} → {qty} (步长={step_size}, 精度={q_prec})")
+        
         return qty
 
     def _normalize_price(self, symbol: str, price: float) -> float:
+        """根据交易规则规范化价格"""
+        original_price = price
         info = self._get_symbol_info(symbol)
         if not info:
             return price
@@ -132,6 +140,11 @@ class TradingExecutor:
         p_prec = info.get('pricePrecision')
         if isinstance(p_prec, int):
             price = self._round_to_precision(price, p_prec)
+        
+        # 打印规范化信息
+        if abs(original_price - price) > 0.0001:
+            print(f"价格规范化: {symbol} {original_price:.8f} → {price} (步长={tick_size}, 精度={p_prec})")
+        
         return price
 
     @staticmethod
@@ -161,18 +174,21 @@ class TradingExecutor:
         if not self.api_key or not self.api_secret:
             print("缺少交易所API凭证，无法调用签名接口。请设置环境变量 EXCHANGE_API_KEY 与 EXCHANGE_API_SECRET。")
             return {"code": -1, "msg": "MISSING_API_CREDENTIALS"}
-        if params is None:
-            params = {}
-        if 'recvWindow' not in params:
-            params['recvWindow'] = 5000
+        
+        # 保存原始参数，避免重试时参数被污染
+        original_params = params.copy() if params else {}
+        if 'recvWindow' not in original_params:
+            original_params['recvWindow'] = 5000
         
         max_retries = 3
         retry_delay = 2
         
         for attempt in range(max_retries):
             try:
-                params['timestamp'] = int(time.time() * 1000)
-                params['signature'] = self._generate_signature(params)
+                # 每次重试使用原始参数的新副本
+                request_params = original_params.copy()
+                request_params['timestamp'] = int(time.time() * 1000)
+                request_params['signature'] = self._generate_signature(request_params)
 
                 headers = {
                     'X-MBX-APIKEY': self.api_key
@@ -181,11 +197,11 @@ class TradingExecutor:
                 url = f"{self.base_url}{endpoint}"
                 
                 if method == 'GET':
-                    r = requests.get(url, params=params, headers=headers, timeout=30)
+                    r = requests.get(url, params=request_params, headers=headers, timeout=30)
                 elif method == 'POST':
-                    r = requests.post(url, params=params, headers=headers, timeout=30)
+                    r = requests.post(url, params=request_params, headers=headers, timeout=30)
                 elif method == 'DELETE':
-                    r = requests.delete(url, params=params, headers=headers, timeout=30)
+                    r = requests.delete(url, params=request_params, headers=headers, timeout=30)
                 else:
                     raise ValueError(f"Unsupported HTTP method: {method}")
                     
@@ -284,12 +300,14 @@ class TradingExecutor:
             price = float(r.json().get('price', '0'))
         except Exception:
             price = 0.0
+        
         norm_qty = self._normalize_quantity(symbol, float(quantity), price)
         if norm_qty <= 0:
             print(f"数量规范化后无效，取消下单: 原数量={quantity}, 规范化后={norm_qty}")
             return None
 
         endpoint = "/fapi/v1/order"
+        # 注意：不要在这里添加timestamp和signature，这些会在_send_signed_request中添加
         params = {
             'symbol': symbol,
             'side': side,
@@ -300,10 +318,10 @@ class TradingExecutor:
         result = self._send_signed_request('POST', endpoint, params)
         
         if result and not self._is_error_response(result):
-            print(f"市价单执行成功: {symbol} {side} {quantity}")
+            print(f"市价单执行成功: {symbol} {side} {norm_qty}")
             return result
         else:
-            print(f"市价单执行失败: {symbol} {side} {quantity}，返回: {result}")
+            print(f"市价单执行失败: {symbol} {side} {norm_qty}，返回: {result}")
             return None
     
     def place_stop_loss_order(self, symbol: str, side: str, quantity: float, 
