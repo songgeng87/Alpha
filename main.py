@@ -131,7 +131,7 @@ class TradingSystem:
         prefix += "Below that is your current account information, value, performance, positions, etc.\n\n"
         prefix += "ALL OF THE PRICE OR SIGNAL DATA BELOW IS ORDERED: OLDEST → NEWEST\n\n"
         prefix += "Timeframes note: Unless stated otherwise in a section title, intraday series "
-        prefix += "are provided at the configured intervals. If a coin uses a different interval, "
+        prefix += "are provided at 3‑minute intervals. If a coin uses a different interval, "
         prefix += "it is explicitly stated in that section.\n"
         
         return prefix

@@ -24,3 +24,4 @@ logs/
 
 # AI interaction history
 ai_history/
+config.json
