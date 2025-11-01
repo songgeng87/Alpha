@@ -701,29 +701,46 @@ class TradingExecutor:
                 })
                 continue
             
-            # 检查是否为亏损状态下的平仓（根据需求，亏损时不平仓）
-            if action == 'CLOSE' and symbol in self.active_positions:
-                position = self.active_positions[symbol]
-                current_price = trade.get('entry_price_target', position['entry_price'])
-                entry_price = position['entry_price']
-                direction = position['direction']
+            # 检查是否为亏损状态下的平/减仓（根据需求，亏损时不执行CLOSE，包括部分减仓）
+            if action == 'CLOSE':
+                direction = None
+                entry_price = 0.0
                 
-                # 判断是否亏损
-                is_loss = False
-                if direction == 'LONG' and current_price < entry_price:
-                    is_loss = True
-                elif direction == 'SHORT' and current_price > entry_price:
-                    is_loss = True
+                if symbol in self.active_positions:
+                    position = self.active_positions[symbol]
+                    direction = position['direction']
+                    entry_price = position['entry_price']
+                else:
+                    # 尝试从交易所查询无状态持仓
+                    exch_pos = self.get_position_info(symbol)
+                    try:
+                        pos_amt = float(exch_pos.get('positionAmt', '0')) if exch_pos else 0.0
+                        entry_price = float(exch_pos.get('entryPrice', '0')) if exch_pos else 0.0
+                    except Exception:
+                        pos_amt, entry_price = 0.0, 0.0
+                    if abs(pos_amt) > 1e-12:
+                        direction = 'LONG' if pos_amt > 0 else 'SHORT'
                 
-                if is_loss:
-                    print(f"当前持仓亏损，不执行平仓操作")
-                    results['skipped_low_confidence'] += 1
-                    results['details'].append({
-                        'symbol': symbol,
-                        'action': action,
-                        'status': 'skipped_loss_position'
-                    })
-                    continue
+                # 若可判定方向与入场价，则依据当前价格判断是否亏损
+                if direction and entry_price:
+                    try:
+                        current_price = float(trade.get('entry_price_target', entry_price))
+                    except Exception:
+                        current_price = entry_price
+                    is_loss = False
+                    if direction == 'LONG' and current_price < entry_price:
+                        is_loss = True
+                    elif direction == 'SHORT' and current_price > entry_price:
+                        is_loss = True
+                    if is_loss:
+                        print(f"当前持仓亏损，不执行平/减仓操作")
+                        results['skipped_low_confidence'] += 1
+                        results['details'].append({
+                            'symbol': symbol,
+                            'action': action,
+                            'status': 'skipped_loss_position'
+                        })
+                        continue
             
             # 执行交易
             success = False
