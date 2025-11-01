@@ -10,6 +10,10 @@ from pathlib import Path
 from typing import Dict, List
 from data_fetcher import DataFetcher
 from ai_decision import AIDecision
+from dotenv import load_dotenv
+
+# 加载 .env 环境变量
+load_dotenv()
 
 app = Flask(__name__, static_folder='web', static_url_path='')
 CORS(app)  # 允许跨域请求

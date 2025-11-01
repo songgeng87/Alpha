@@ -59,6 +59,27 @@ API文档: http://0.0.0.0:5000/api/health
 ============================================================
 ```
 
+### 3.1 使用脚本启动（推荐）
+
+提供了便捷脚本用于后台运行与日志管理：
+
+```bash
+# 后台启动（自动写入 server.pid，并输出到 logs/server_*.log）
+./start_server.sh
+
+# 查看最新日志
+./tail_server_logs.sh
+
+# 停止服务
+./stop_server.sh
+```
+
+如遇权限问题，可先赋予脚本执行权限：
+
+```bash
+chmod +x start_server.sh stop_server.sh tail_server_logs.sh
+```
+
 ### 4. 访问Web界面
 
 打开浏览器访问 http://localhost:5000
