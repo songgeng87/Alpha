@@ -41,8 +41,9 @@ echo "日志文件: $LOG_FILE"
 echo "PID文件:  $PID_FILE"
 echo "========================================"
 
-# 启动主程序（后台运行）
-nohup python3 main.py --mode continuous --interval "$INTERVAL" >> "$LOG_FILE" 2>&1 &
+# 启动主程序（后台运行，开启无缓冲输出，确保日志实时写入）
+export PYTHONUNBUFFERED=1
+nohup python3 -u main.py --mode continuous --interval "$INTERVAL" >> "$LOG_FILE" 2>&1 &
 
 # 保存PID
 MAIN_PID=$!
