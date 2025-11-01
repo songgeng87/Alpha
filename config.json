@@ -29,6 +29,12 @@
             "short_interval": "3m",
             "long_interval": "4h",
             "kline_limit": 1000
+        },
+        {
+            "symbol": "VIRTUALUSDT",
+            "short_interval": "3m",
+            "long_interval": "4h",
+            "kline_limit": 1000
         }
     ],
     "ai_models": [
