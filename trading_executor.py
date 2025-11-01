@@ -38,6 +38,105 @@ class TradingExecutor:
         
         # 存储活跃仓位及其止损单
         self.active_positions = {}  # {symbol: position_info}
+        # 交易对规则缓存（精度/步长/最小名义等）
+        self._symbol_info_cache: Dict[str, Dict] = {}
+
+    # =========================
+    # 交易规则与精度工具方法
+    # =========================
+    def _get_symbol_info(self, symbol: str) -> Optional[Dict]:
+        """获取交易对的精度与过滤规则（带缓存）"""
+        if symbol in self._symbol_info_cache:
+            return self._symbol_info_cache[symbol]
+        try:
+            url = f"{self.base_url}/fapi/v1/exchangeInfo"
+            r = requests.get(url, params={'symbol': symbol}, timeout=15)
+            r.raise_for_status()
+            data = r.json()
+            symbols = data.get('symbols', [])
+            if not symbols:
+                return None
+            info = symbols[0]
+            # 提取常用过滤器
+            filters = {f['filterType']: f for f in info.get('filters', [])}
+            info['filters_map'] = filters
+            self._symbol_info_cache[symbol] = info
+            return info
+        except Exception as e:
+            print(f"获取交易规则失败 {symbol}: {e}")
+            return None
+
+    @staticmethod
+    def _floor_to_step(value: float, step: float) -> float:
+        if step <= 0:
+            return value
+        # 向下取整到步长
+        import math
+        return math.floor(value / step) * step
+
+    @staticmethod
+    def _round_to_precision(value: float, precision: int) -> float:
+        if precision is None:
+            return value
+        fmt = f"{{:.{precision}f}}"
+        return float(fmt.format(value))
+
+    def _normalize_quantity(self, symbol: str, qty: float, price: float) -> float:
+        """根据交易规则规范化下单数量，满足步长、最小数量、最小名义金额等"""
+        info = self._get_symbol_info(symbol)
+        if not info:
+            return qty
+        filters = info.get('filters_map', {})
+
+        # LOT_SIZE: minQty, stepSize
+        lot = filters.get('LOT_SIZE') or {}
+        min_qty = float(lot.get('minQty', '0')) if lot else 0.0
+        step_size = float(lot.get('stepSize', '0')) if lot else 0.0
+
+        # 处理步长
+        if step_size and step_size > 0:
+            qty = self._floor_to_step(qty, step_size)
+
+        # 处理最小数量
+        if min_qty and qty < min_qty:
+            qty = min_qty
+
+        # MIN_NOTIONAL: 名义金额最小值（期货为 notional）
+        min_notional_filter = filters.get('MIN_NOTIONAL') or {}
+        min_notional = float(min_notional_filter.get('notional', '0')) if min_notional_filter else 0.0
+        notional = qty * price if price else 0.0
+        if min_notional and notional < min_notional and price:
+            # 向上调整到满足最小名义金额，再按步长取整
+            target_qty = min_notional / price
+            if step_size and step_size > 0:
+                import math
+                target_qty = math.ceil(target_qty / step_size) * step_size
+            qty = max(qty, target_qty)
+
+        # 限制数量精度（quantityPrecision）
+        q_prec = info.get('quantityPrecision')
+        if isinstance(q_prec, int):
+            qty = self._round_to_precision(qty, q_prec)
+
+        return qty
+
+    def _normalize_price(self, symbol: str, price: float) -> float:
+        info = self._get_symbol_info(symbol)
+        if not info:
+            return price
+        filters = info.get('filters_map', {})
+        price_filter = filters.get('PRICE_FILTER') or {}
+        tick_size = float(price_filter.get('tickSize', '0')) if price_filter else 0.0
+        if tick_size and tick_size > 0:
+            price = self._floor_to_step(price, tick_size)
+        p_prec = info.get('pricePrecision')
+        if isinstance(p_prec, int):
+            price = self._round_to_precision(price, p_prec)
+        return price
+
+    @staticmethod
+    def _is_error_response(resp: Dict) -> bool:
+        return isinstance(resp, dict) and ('code' in resp) and (str(resp.get('code')) != '0')
     
     def _generate_signature(self, params: Dict) -> str:
         """
@@ -158,12 +257,11 @@ class TradingExecutor:
         }
         
         result = self._send_signed_request('POST', endpoint, params)
-        
-        if result:
+        if result and not self._is_error_response(result):
             print(f"设置 {symbol} 杠杆为 {leverage}x 成功")
             return True
         else:
-            print(f"设置 {symbol} 杠杆失败")
+            print(f"设置 {symbol} 杠杆失败: {result}")
             return False
     
     def place_market_order(self, symbol: str, side: str, quantity: float) -> Optional[Dict]:
@@ -178,21 +276,34 @@ class TradingExecutor:
         Returns:
             订单信息
         """
+        # 先按规则规范化数量
+        # 获取最新价格用于名义金额判断：这里简化为通过标的最新价接口获取一次
+        try:
+            r = requests.get(f"{self.base_url}/fapi/v1/ticker/price", params={'symbol': symbol}, timeout=10)
+            r.raise_for_status()
+            price = float(r.json().get('price', '0'))
+        except Exception:
+            price = 0.0
+        norm_qty = self._normalize_quantity(symbol, float(quantity), price)
+        if norm_qty <= 0:
+            print(f"数量规范化后无效，取消下单: 原数量={quantity}, 规范化后={norm_qty}")
+            return None
+
         endpoint = "/fapi/v1/order"
         params = {
             'symbol': symbol,
             'side': side,
             'type': 'MARKET',
-            'quantity': quantity
+            'quantity': norm_qty
         }
-        
+
         result = self._send_signed_request('POST', endpoint, params)
         
-        if result:
+        if result and not self._is_error_response(result):
             print(f"市价单执行成功: {symbol} {side} {quantity}")
             return result
         else:
-            print(f"市价单执行失败: {symbol} {side} {quantity}")
+            print(f"市价单执行失败: {symbol} {side} {quantity}，返回: {result}")
             return None
     
     def place_stop_loss_order(self, symbol: str, side: str, quantity: float, 
@@ -209,22 +320,24 @@ class TradingExecutor:
         Returns:
             订单信息
         """
+        # 规范化止损价格
+        norm_price = self._normalize_price(symbol, float(stop_price))
         endpoint = "/fapi/v1/order"
         params = {
             'symbol': symbol,
             'side': side,
             'type': 'STOP_MARKET',
-            'stopPrice': stop_price,
+            'stopPrice': norm_price,
             'closePosition': 'true'  # 直接平仓
         }
         
         result = self._send_signed_request('POST', endpoint, params)
         
-        if result:
-            print(f"止损单设置成功: {symbol} {side} @ {stop_price}")
+        if result and not self._is_error_response(result):
+            print(f"止损单设置成功: {symbol} {side} @ {norm_price}")
             return result
         else:
-            print(f"止损单设置失败: {symbol} {side} @ {stop_price}")
+            print(f"止损单设置失败: {symbol} {side} @ {norm_price}，返回: {result}")
             return None
     
     def cancel_order(self, symbol: str, order_id: int) -> bool:
@@ -245,12 +358,11 @@ class TradingExecutor:
         }
         
         result = self._send_signed_request('DELETE', endpoint, params)
-        
-        if result:
+        if result and not self._is_error_response(result):
             print(f"订单 {order_id} 取消成功")
             return True
         else:
-            print(f"订单 {order_id} 取消失败")
+            print(f"订单 {order_id} 取消失败: {result}")
             return False
     
     def cancel_all_stop_loss_orders(self, symbol: str) -> bool:
@@ -269,7 +381,7 @@ class TradingExecutor:
         
         orders = self._send_signed_request('GET', endpoint, params)
         
-        if not orders:
+        if not orders or self._is_error_response(orders):
             return True
         
         # 取消所有止损单
@@ -317,8 +429,9 @@ class TradingExecutor:
         # 下市价单开仓
         side = 'BUY' if direction == 'LONG' else 'SELL'
         order = self.place_market_order(symbol, side, quantity)
-        
         if not order:
+            # 确保没有残留的止损条件单（防御性清理）
+            self.cancel_all_stop_loss_orders(symbol)
             return False
         
         # 设置止损单
