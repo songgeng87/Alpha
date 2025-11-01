@@ -312,7 +312,7 @@ class TradingExecutor:
             print(f"设置 {symbol} 杠杆失败: {result}")
             return False
     
-    def place_market_order(self, symbol: str, side: str, quantity: float) -> Optional[Dict]:
+    def place_market_order(self, symbol: str, side: str, quantity: float, reduce_only: bool = False) -> Optional[Dict]:
         """
         下市价单
         
@@ -352,6 +352,9 @@ class TradingExecutor:
             'type': 'MARKET',
             'quantity': norm_qty
         }
+        if reduce_only:
+            # 仅减仓，防止开反向新仓
+            params['reduceOnly'] = 'true'
 
         result = self._send_signed_request('POST', endpoint, params)
         
@@ -518,23 +521,48 @@ class TradingExecutor:
         """
         symbol = trade['symbol']
         
-        # 检查是否有仓位
-        if symbol not in self.active_positions:
-            print(f"没有 {symbol} 的活跃仓位")
+        # 先尝试使用内存中的仓位；没有则回落到交易所查询（无状态平仓）
+        position = self.active_positions.get(symbol)
+        if not position:
+            exch_pos = self.get_position_info(symbol)
+            if not exch_pos:
+                print(f"没有 {symbol} 的活跃仓位（内存与交易所均为空）")
+                return False
+            try:
+                pos_amt = float(exch_pos.get('positionAmt', '0'))
+                entry_price = float(exch_pos.get('entryPrice', '0'))
+            except Exception:
+                pos_amt, entry_price = 0.0, 0.0
+            if abs(pos_amt) < 1e-12:
+                print(f"没有 {symbol} 的活跃仓位（仓位数量为0）")
+                return False
+            direction = 'LONG' if pos_amt > 0 else 'SHORT'
+            quantity = abs(pos_amt)
+            print(f"检测到交易所持仓: {symbol} {direction} 数量={quantity}，将进行无状态平仓（reduceOnly）")
+            # 无内存止损单信息，防御性清理所有止损类订单
+            self.cancel_all_stop_loss_orders(symbol)
+            side = 'SELL' if direction == 'LONG' else 'BUY'
+            order = self.place_market_order(symbol, side, quantity, reduce_only=True)
+            if order:
+                # 无状态平仓完成，不涉及内存记录
+                return True
             return False
-        
-        position = self.active_positions[symbol]
+
+        # 内存有仓位信息，按记录平仓
         
         # 取消止损单
         if position.get('stop_order_id'):
             self.cancel_order(symbol, position['stop_order_id'])
+        else:
+            # 防御性清理，确保没有残留止损
+            self.cancel_all_stop_loss_orders(symbol)
         
         # 平仓
         direction = position['direction']
         quantity = position['quantity']
         side = 'SELL' if direction == 'LONG' else 'BUY'
         
-        order = self.place_market_order(symbol, side, quantity)
+        order = self.place_market_order(symbol, side, quantity, reduce_only=True)
         
         if order:
             # 从活跃仓位中移除
