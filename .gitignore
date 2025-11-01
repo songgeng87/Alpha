@@ -17,3 +17,7 @@ __pycache__/
 invocation_count.txt    
 work.md
 arena.md
+
+# Trading process management
+trading.pid
+logs/

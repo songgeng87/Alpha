@@ -1,9 +1,10 @@
 """
 AI决策模块
-支持多个AI模型进行交易决策，汇总建议并确保一致性
+支持多个AI模型进行交易决策,汇总建议并确保一致性
 """
 import requests
 import json
+import time
 from typing import Dict, List, Optional
 from pathlib import Path
 import os
@@ -64,73 +65,75 @@ class AIDecision:
         
         return prompt
     
-    def query_ai(self, ai_config: Dict, system_prompt: str, user_prompt: str) -> Optional[Dict]:
-        """
-        查询单个AI模型
-        
-        Args:
-            ai_config: AI配置信息
-            system_prompt: 系统提示词
-            user_prompt: 用户提示词
+    def query_ai(self, prompt: str, model_config: Dict) -> str:
+        """调用单个AI模型进行决策（带重试机制和异常隔离）"""
+        api_key = model_config.get("api_key")
+        api_key_env = model_config.get("api_key_env")
+        if not api_key and api_key_env:
+            api_key = os.getenv(api_key_env)
+        if not api_key:
+            print(f"缺少API Key，无法调用模型 {model_config.get('name', 'unknown')}")
+            return "{}"
             
-        Returns:
-            AI返回的交易建议（JSON格式）
-        """
-        api_url = ai_config['api_url']
-        # 优先环境变量
-        api_key = ai_config.get('api_key')
-        if ai_config.get('api_key_env'):
-            api_key = os.getenv(ai_config['api_key_env']) or api_key
-        model = ai_config['model']
-        ai_name = ai_config['name']
-        
+        url = model_config["url"]
+        model = model_config["model"]
         headers = {
-            'Content-Type': 'application/json',
-            'Authorization': f'Bearer {api_key}'
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}"
         }
         
-        payload = {
-            'model': model,
-            'messages': [
-                {'role': 'system', 'content': system_prompt},
-                {'role': 'user', 'content': user_prompt}
+        data = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": prompt}
             ],
-            'temperature': 0.7,
-            'max_tokens': 2000
+            "stream": False
         }
-        print(f"系统提示词: {system_prompt}")
-        print(f"用户提示词: {user_prompt}")
-        try:
-            print(f"\n正在查询 {ai_name}...")
-            response = requests.post(api_url, headers=headers, json=payload, timeout=60)
-            response.raise_for_status()
-            
-            result = response.json()
-            content = result['choices'][0]['message']['content']
-            
-            # 尝试解析JSON
-            # 去除可能的markdown代码块标记
-            content = content.strip()
-            if content.startswith('```json'):
-                content = content[7:]
-            if content.startswith('```'):
-                content = content[3:]
-            if content.endswith('```'):
-                content = content[:-3]
-            content = content.strip()
-            
-            decision = json.loads(content)
-            print(f"{ai_name} 返回建议成功")
-            print(f"返回内容: {content}")
-            return decision
-            
-        except json.JSONDecodeError as e:
-            print(f"{ai_name} 返回的JSON格式无效: {e}")
-            print(f"原始内容: {content}")
-            return None
-        except Exception as e:
-            print(f"查询 {ai_name} 失败: {e}")
-            return None
+
+        max_retries = 3
+        retry_delay = 2
+        timeout = 60
+        
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(url, headers=headers, json=data, timeout=timeout)
+                response.raise_for_status()
+                result = response.json()
+                
+                if "choices" in result and len(result["choices"]) > 0:
+                    return result["choices"][0]["message"]["content"]
+                else:
+                    print(f"AI响应格式异常 [{model_config.get('name')}]: {result}")
+                    return "{}"
+                    
+            except requests.exceptions.Timeout:
+                print(f"AI查询超时 [{model_config.get('name')}] (尝试 {attempt + 1}/{max_retries})")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # 指数退避
+                    continue
+                else:
+                    return "{}"
+                    
+            except requests.exceptions.RequestException as e:
+                print(f"AI查询网络错误 [{model_config.get('name')}] (尝试 {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    retry_delay *= 2
+                    continue
+                else:
+                    return "{}"
+                    
+            except json.JSONDecodeError as e:
+                print(f"AI响应JSON解析失败 [{model_config.get('name')}]: {e}")
+                return "{}"
+                
+            except Exception as e:
+                print(f"AI查询失败 [{model_config.get('name')}]: {e}")
+                return "{}"
+        
+        return "{}"
     
     def query_all_ais(self, prefix: str, market_data: str, account_data: str) -> List[Dict]:
         """

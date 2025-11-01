@@ -138,7 +138,7 @@ class TradingSystem:
     
     def run_single_cycle(self) -> Dict:
         """
-        运行单次交易周期
+        运行单次交易周期（带异常隔离）
         
         Returns:
             周期执行结果
@@ -152,87 +152,114 @@ class TradingSystem:
         self.invocation_count += 1
         self._save_invocation_count()
         
-        # 1. 获取市场数据
-        print("步骤 1: 获取市场数据...")
-        market_data = self.data_fetcher.get_all_market_data(
-            self.config['trading_pairs']
-        )
-        
-        if not market_data:
-            print("获取市场数据失败，跳过本周期")
-            return {'status': 'failed', 'reason': 'no_market_data'}
-        
-        # 2. 获取账户数据
-        print("\n步骤 2: 获取账户数据...")
-        initial_capital = None
         try:
-            initial_capital = float(self.config.get('performance', {}).get('initial_capital'))
-        except Exception:
-            initial_capital = None
-        account_data_dict = self.data_fetcher.get_account_data(initial_capital=initial_capital)
-        account_data = self.data_fetcher.format_account_data(account_data_dict)
-        available_cash = account_data_dict.get('available_cash', 0)
-        
-        # 3. 生成提示词前缀
-        print("\n步骤 3: 生成提示词前缀...")
-        prefix = self._generate_prompt_prefix()
-        
-        # 4. 查询AI获取决策
-        print("\n步骤 4: 查询AI获取交易决策...")
-        decision = self.ai_decision.get_trading_decision(
-            prefix, market_data, account_data
-        )
-        
-        print(f"\nAI分析:")
-        print(decision.get('analysis', '无分析'))
-        print(f"\n共收到 {decision.get('ai_count', 0)} 个AI响应")
-        print(f"达成共识的交易建议: {decision.get('consensus_count', 0)} 个")
-        
-        trades = decision.get('trades', [])
-        
-        if not trades:
-            print("\n没有需要执行的交易")
-            return {
-                'status': 'success',
-                'trades_count': 0,
-                'executed': 0
-            }
-        
-        # 5. 执行交易
-        print("\n步骤 5: 执行交易...")
-        for i, trade in enumerate(trades, 1):
-            print(f"\n交易建议 {i}:")
-            print(f"  交易对: {trade.get('symbol')}")
-            print(f"  动作: {trade.get('action')}")
-            print(f"  方向: {trade.get('direction', 'N/A')}")
-            print(f"  杠杆: {trade.get('leverage', 'N/A')}")
-            print(f"  仓位大小: {trade.get('position_size_percent', 0)*100:.1f}%")
-            print(f"  信心度: {trade.get('confidence', 0):.2f}")
-            print(f"  理由: {trade.get('reason', 'N/A')}")
-        
-        execution_results = self.trading_executor.execute_trades(
-            trades, available_cash
-        )
-        
-        # 6. 输出执行结果
-        print("\n" + "="*80)
-        print("执行结果:")
-        print(f"  总交易数: {execution_results['total']}")
-        print(f"  成功执行: {execution_results['executed']}")
-        print(f"  信心度不足跳过: {execution_results['skipped_low_confidence']}")
-        print(f"  执行失败: {execution_results['failed']}")
-        print("="*80 + "\n")
-        
-        # 显示当前仓位
-        print(self.trading_executor.get_active_positions_summary())
-        
-        return {
-            'status': 'success',
-            'trades_count': execution_results['total'],
-            'executed': execution_results['executed'],
-            'skipped': execution_results['skipped_low_confidence'],
-            'failed': execution_results['failed']
-        }
+            # 1. 获取市场数据
+            print("步骤 1: 获取市场数据...")
+            try:
+                market_data = self.data_fetcher.get_all_market_data(
+                    self.config['trading_pairs']
+                )
+                
+                if not market_data:
+                    print("获取市场数据失败，跳过本周期")
+                    return {'status': 'failed', 'reason': 'no_market_data'}
+            except Exception as e:
+                print(f"市场数据获取异常: {e}")
+                return {'status': 'failed', 'reason': 'market_data_exception'}
+            
+            # 2. 获取账户数据
+            print("\n步骤 2: 获取账户数据...")
+            try:
+                initial_capital = None
+                try:
+                    initial_capital = float(self.config.get('performance', {}).get('initial_capital'))
+                except Exception:
+                    initial_capital = None
+                account_data_dict = self.data_fetcher.get_account_data(initial_capital=initial_capital)
+                account_data = self.data_fetcher.format_account_data(account_data_dict)
+                available_cash = account_data_dict.get('available_cash', 0)
+            except Exception as e:
+                print(f"账户数据获取异常: {e}")
+                return {'status': 'failed', 'reason': 'account_data_exception'}
+            
+            # 3. 生成提示词前缀
+            print("\n步骤 3: 生成提示词前缀...")
+            try:
+                prefix = self._generate_prompt_prefix()
+            except Exception as e:
+                print(f"提示词生成异常: {e}")
+                prefix = ""
+            
+            # 4. 查询AI获取决策
+            print("\n步骤 4: 查询AI获取交易决策...")
+            try:
+                decision = self.ai_decision.get_trading_decision(
+                    prefix, market_data, account_data
+                )
+                
+                print(f"\nAI分析:")
+                print(decision.get('analysis', '无分析'))
+                print(f"\n共收到 {decision.get('ai_count', 0)} 个AI响应")
+                print(f"达成共识的交易建议: {decision.get('consensus_count', 0)} 个")
+                
+                trades = decision.get('trades', [])
+            except Exception as e:
+                print(f"AI决策异常: {e}")
+                return {'status': 'failed', 'reason': 'ai_decision_exception'}
+            
+            if not trades:
+                print("\n没有需要执行的交易")
+                return {
+                    'status': 'success',
+                    'trades_count': 0,
+                    'executed': 0
+                }
+            
+            # 5. 执行交易
+            print("\n步骤 5: 执行交易...")
+            try:
+                for i, trade in enumerate(trades, 1):
+                    print(f"\n交易建议 {i}:")
+                    print(f"  交易对: {trade.get('symbol')}")
+                    print(f"  动作: {trade.get('action')}")
+                    print(f"  方向: {trade.get('direction', 'N/A')}")
+                    print(f"  杠杆: {trade.get('leverage', 'N/A')}")
+                    print(f"  仓位大小: {trade.get('position_size_percent', 0)*100:.1f}%")
+                    print(f"  信心度: {trade.get('confidence', 0):.2f}")
+                    print(f"  理由: {trade.get('reason', 'N/A')}")
+                
+                execution_results = self.trading_executor.execute_trades(
+                    trades, available_cash
+                )
+                
+                # 6. 输出执行结果
+                print("\n" + "="*80)
+                print("执行结果:")
+                print(f"  总交易数: {execution_results['total']}")
+                print(f"  成功执行: {execution_results['executed']}")
+                print(f"  信心度不足跳过: {execution_results['skipped_low_confidence']}")
+                print(f"  执行失败: {execution_results['failed']}")
+                print("="*80 + "\n")
+                
+                # 显示当前仓位
+                print(self.trading_executor.get_active_positions_summary())
+                
+                return {
+                    'status': 'success',
+                    'trades_count': execution_results['total'],
+                    'executed': execution_results['executed'],
+                    'skipped': execution_results['skipped_low_confidence'],
+                    'failed': execution_results['failed']
+                }
+            except Exception as e:
+                print(f"交易执行异常: {e}")
+                return {'status': 'failed', 'reason': 'trade_execution_exception'}
+                
+        except Exception as e:
+            print(f"单轮周期发生严重异常: {e}")
+            import traceback
+            traceback.print_exc()
+            return {'status': 'failed', 'reason': 'critical_exception'}
     
     def run_continuous(self, interval_minutes: int = 3):
         """

@@ -188,28 +188,60 @@ DEEPSEEK_API_KEY=你的DeepSeekKey
 运行一次交易周期，获取数据、查询AI、执行交易后退出：
 
 ```bash
-python main.py --mode single
+python3 main.py --mode single
 ```
 
-### 持续运行模式
+### 持续运行模式（直接命令）
 
 系统会持续运行，每隔指定时间执行一次交易周期：
 
 ```bash
 # 每3分钟运行一次（默认）
-python main.py --mode continuous --interval 3
+python3 main.py --mode continuous --interval 3
 
 # 每5分钟运行一次
-python main.py --mode continuous --interval 5
+python3 main.py --mode continuous --interval 5
 ```
 
-### 使用自定义配置文件
+### 持续运行模式（使用脚本，推荐）
+
+使用提供的启动/停止脚本可以更方便地管理后台运行的交易系统：
+
+**启动交易系统（后台运行）**
+```bash
+./start_trading.sh      # 默认3分钟间隔
+./start_trading.sh 5    # 自定义5分钟间隔
+```
+
+脚本会：
+- 在后台启动交易系统
+- 将进程PID保存到 `trading.pid`
+- 输出日志到 `logs/trading_YYYYMMDD_HHMMSS.log`
+- 检查是否已有实例在运行（避免重复启动）
+
+**查看实时日志**
+```bash
+tail -f logs/trading_*.log
+```
+
+**停止交易系统**
+```bash
+./stop_trading.sh
+```
+
+脚本会：
+- 读取PID文件
+- 发送SIGTERM信号优雅停止（主程序会完成当前周期）
+- 如果15秒未响应，发送SIGKILL强制停止
+- 清理PID文件
+
+### 使用自定义配置文件（高级）
 
 ```bash
-python main.py --config my_config.json --mode continuous
+python3 main.py --config my_config.json --mode continuous
 ```
 
-### 停止系统
+### 手动停止系统
 
 在持续运行模式下，按 `Ctrl+C` 可以优雅地停止系统。
 

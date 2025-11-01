@@ -57,50 +57,66 @@ class TradingExecutor:
         ).hexdigest()
         return signature
     
-    def _send_signed_request(self, method: str, endpoint: str, params: Dict) -> Optional[Dict]:
-        """
-        发送需要签名的请求
-        
-        Args:
-            method: HTTP方法（GET, POST等）
-            endpoint: API端点
-            params: 请求参数
-            
-        Returns:
-            响应数据
-        """
+    def _send_signed_request(self, method: str, endpoint: str, params: Dict) -> Dict:
+        """发送需要签名的请求（期货USDT-M，带重试机制）"""
         if not self.api_key or not self.api_secret:
-            print("缺少交易所API凭证，无法执行签名请求。请设置环境变量 EXCHANGE_API_KEY 与 EXCHANGE_API_SECRET。")
-            return None
+            print("缺少交易所API凭证，无法调用签名接口。请设置环境变量 EXCHANGE_API_KEY 与 EXCHANGE_API_SECRET。")
+            return {"code": -1, "msg": "MISSING_API_CREDENTIALS"}
         if params is None:
             params = {}
         if 'recvWindow' not in params:
             params['recvWindow'] = 5000
-        params['timestamp'] = int(time.time() * 1000)
-        params['signature'] = self._generate_signature(params)
         
-        headers = {
-            'X-MBX-APIKEY': self.api_key
-        }
+        max_retries = 3
+        retry_delay = 2
         
-        url = f"{self.base_url}{endpoint}"
+        for attempt in range(max_retries):
+            try:
+                params['timestamp'] = int(time.time() * 1000)
+                params['signature'] = self._generate_signature(params)
+
+                headers = {
+                    'X-MBX-APIKEY': self.api_key
+                }
+
+                url = f"{self.base_url}{endpoint}"
+                
+                if method == 'GET':
+                    r = requests.get(url, params=params, headers=headers, timeout=30)
+                elif method == 'POST':
+                    r = requests.post(url, params=params, headers=headers, timeout=30)
+                elif method == 'DELETE':
+                    r = requests.delete(url, params=params, headers=headers, timeout=30)
+                else:
+                    raise ValueError(f"Unsupported HTTP method: {method}")
+                    
+                r.raise_for_status()
+                return r.json()
+                
+            except requests.exceptions.Timeout:
+                print(f"交易请求超时 [{method} {endpoint}] (尝试 {attempt + 1}/{max_retries})")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    return {"code": -1, "msg": "REQUEST_TIMEOUT", "error": "请求超时"}
+                    
+            except requests.exceptions.RequestException as e:
+                print(f"交易请求网络错误 [{method} {endpoint}] (尝试 {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    try:
+                        return r.json()
+                    except Exception:
+                        return {"code": -1, "msg": "NETWORK_ERROR", "error": str(e)}
+                        
+            except Exception as e:
+                print(f"交易请求失败 [{method} {endpoint}]: {e}")
+                return {"code": -1, "msg": "UNKNOWN_ERROR", "error": str(e)}
         
-        try:
-            if method == 'GET':
-                response = requests.get(url, params=params, headers=headers, timeout=10)
-            elif method == 'POST':
-                response = requests.post(url, params=params, headers=headers, timeout=10)
-            elif method == 'DELETE':
-                response = requests.delete(url, params=params, headers=headers, timeout=10)
-            else:
-                print(f"不支持的HTTP方法: {method}")
-                return None
-            
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            print(f"API请求失败: {e}")
-            return None
+        return {"code": -1, "msg": "MAX_RETRIES_EXCEEDED"}
     
     def get_position_info(self, symbol: str) -> Optional[Dict]:
         """

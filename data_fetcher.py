@@ -55,7 +55,7 @@ class DataFetcher:
         return signature
 
     def _send_signed_request(self, method: str, endpoint: str, params: Dict) -> Dict:
-        """发送需要签名的请求（期货USDT-M）"""
+        """发送需要签名的请求（期货USDT-M，带重试机制）"""
         if not self.api_key or not self.api_secret:
             print("缺少交易所API凭证，无法调用签名接口。请设置环境变量 EXCHANGE_API_KEY 与 EXCHANGE_API_SECRET。")
             return {"code": -1, "msg": "MISSING_API_CREDENTIALS"}
@@ -64,35 +64,61 @@ class DataFetcher:
         # 默认添加较大的 recvWindow 提高容错
         if 'recvWindow' not in params:
             params['recvWindow'] = 5000
-        params['timestamp'] = int(time.time() * 1000)
-        params['signature'] = self._generate_signature(params)
-
-        headers = {
-            'X-MBX-APIKEY': self.api_key
-        }
-
-        url = f"{self.base_url}{endpoint}"
-        try:
-            if method == 'GET':
-                r = requests.get(url, params=params, headers=headers, timeout=10)
-            elif method == 'POST':
-                r = requests.post(url, params=params, headers=headers, timeout=10)
-            elif method == 'DELETE':
-                r = requests.delete(url, params=params, headers=headers, timeout=10)
-            else:
-                raise ValueError(f"Unsupported HTTP method: {method}")
-            r.raise_for_status()
-            return r.json()
-        except Exception as e:
-            print(f"签名请求失败 [{method} {endpoint}]: {e}")
+        
+        max_retries = 3
+        retry_delay = 2
+        
+        for attempt in range(max_retries):
             try:
-                return r.json()  # 尝试返回错误JSON，便于定位问题
-            except Exception:
-                return {"error": str(e)}
+                params['timestamp'] = int(time.time() * 1000)
+                params['signature'] = self._generate_signature(params)
+
+                headers = {
+                    'X-MBX-APIKEY': self.api_key
+                }
+
+                url = f"{self.base_url}{endpoint}"
+                
+                if method == 'GET':
+                    r = requests.get(url, params=params, headers=headers, timeout=30)
+                elif method == 'POST':
+                    r = requests.post(url, params=params, headers=headers, timeout=30)
+                elif method == 'DELETE':
+                    r = requests.delete(url, params=params, headers=headers, timeout=30)
+                else:
+                    raise ValueError(f"Unsupported HTTP method: {method}")
+                    
+                r.raise_for_status()
+                return r.json()
+                
+            except requests.exceptions.Timeout:
+                print(f"签名请求超时 [{method} {endpoint}] (尝试 {attempt + 1}/{max_retries})")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    return {"code": -1, "msg": "REQUEST_TIMEOUT", "error": "请求超时"}
+                    
+            except requests.exceptions.RequestException as e:
+                print(f"签名请求网络错误 [{method} {endpoint}] (尝试 {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    try:
+                        return r.json()
+                    except Exception:
+                        return {"code": -1, "msg": "NETWORK_ERROR", "error": str(e)}
+                        
+            except Exception as e:
+                print(f"签名请求失败 [{method} {endpoint}]: {e}")
+                return {"code": -1, "msg": "UNKNOWN_ERROR", "error": str(e)}
+        
+        return {"code": -1, "msg": "MAX_RETRIES_EXCEEDED"}
     
     def get_klines(self, symbol: str, interval: str, limit: int = 100) -> List[Dict]:
         """
-        获取K线数据
+        获取K线数据（带重试机制）
         
         Args:
             symbol: 交易对符号，如 'BTCUSDT'
@@ -109,28 +135,55 @@ class DataFetcher:
             'limit': limit
         }
         
-        try:
-            response = requests.get(endpoint, params=params, timeout=10)
-            response.raise_for_status()
-            klines = response.json()
-            
-            # 转换为更易用的格式
-            processed_klines = []
-            for k in klines:
-                processed_klines.append({
-                    'open_time': k[0],
-                    'open': float(k[1]),
-                    'high': float(k[2]),
-                    'low': float(k[3]),
-                    'close': float(k[4]),
-                    'volume': float(k[5]),
-                    'close_time': k[6],
-                })
-            
-            return processed_klines
-        except Exception as e:
-            print(f"获取K线数据失败: {e}")
-            return []
+        # 重试配置
+        max_retries = 3
+        retry_delay = 2  # 秒
+        
+        for attempt in range(max_retries):
+            try:
+                # 增加超时时间到30秒
+                response = requests.get(endpoint, params=params, timeout=30)
+                response.raise_for_status()
+                klines = response.json()
+                
+                # 转换为更易用的格式
+                processed_klines = []
+                for k in klines:
+                    processed_klines.append({
+                        'open_time': k[0],
+                        'open': float(k[1]),
+                        'high': float(k[2]),
+                        'low': float(k[3]),
+                        'close': float(k[4]),
+                        'volume': float(k[5]),
+                        'close_time': k[6],
+                    })
+                
+                return processed_klines
+                
+            except requests.exceptions.Timeout:
+                print(f"获取K线数据超时 (尝试 {attempt + 1}/{max_retries}): {symbol} {interval}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    print(f"获取K线数据最终失败: {symbol} {interval} - 超时")
+                    return []
+                    
+            except requests.exceptions.RequestException as e:
+                print(f"获取K线数据网络错误 (尝试 {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    print(f"获取K线数据最终失败: {symbol} {interval}")
+                    return []
+                    
+            except Exception as e:
+                print(f"获取K线数据异常: {e}")
+                return []
+        
+        return []
     
     def calculate_indicators(self, klines: List[Dict], is_short_term: bool = True) -> Dict:
         """
@@ -195,7 +248,7 @@ class DataFetcher:
     
     def get_open_interest_and_funding(self, symbol: str) -> Dict:
         """
-        获取持仓量和资金费率
+        获取持仓量和资金费率（带重试机制）
         
         Args:
             symbol: 交易对符号
@@ -203,24 +256,46 @@ class DataFetcher:
         Returns:
             包含持仓量和资金费率的字典
         """
-        try:
-            # 获取持仓量
-            oi_endpoint = f"{self.base_url}/fapi/v1/openInterest"
-            oi_response = requests.get(oi_endpoint, params={'symbol': symbol}, timeout=10)
-            oi_data = oi_response.json()
-            
-            # 获取资金费率
-            funding_endpoint = f"{self.base_url}/fapi/v1/premiumIndex"
-            funding_response = requests.get(funding_endpoint, params={'symbol': symbol}, timeout=10)
-            funding_data = funding_response.json()
-            
-            return {
-                'open_interest': float(oi_data.get('openInterest', 0)),
-                'funding_rate': float(funding_data.get('lastFundingRate', 0))
-            }
-        except Exception as e:
-            print(f"获取持仓量和资金费率失败: {e}")
-            return {'open_interest': 0, 'funding_rate': 0}
+        max_retries = 3
+        retry_delay = 2
+        
+        for attempt in range(max_retries):
+            try:
+                # 获取持仓量
+                oi_endpoint = f"{self.base_url}/fapi/v1/openInterest"
+                oi_response = requests.get(oi_endpoint, params={'symbol': symbol}, timeout=30)
+                oi_response.raise_for_status()
+                oi_data = oi_response.json()
+                
+                # 获取资金费率
+                funding_endpoint = f"{self.base_url}/fapi/v1/premiumIndex"
+                funding_response = requests.get(funding_endpoint, params={'symbol': symbol}, timeout=30)
+                funding_response.raise_for_status()
+                funding_data = funding_response.json()
+                
+                return {
+                    'open_interest': float(oi_data.get('openInterest', 0)),
+                    'funding_rate': float(funding_data.get('lastFundingRate', 0))
+                }
+                
+            except requests.exceptions.Timeout:
+                print(f"获取持仓量/资金费率超时 (尝试 {attempt + 1}/{max_retries}): {symbol}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    print(f"获取持仓量/资金费率最终失败: {symbol} - 使用默认值")
+                    return {'open_interest': 0, 'funding_rate': 0}
+                    
+            except Exception as e:
+                print(f"获取持仓量和资金费率失败 (尝试 {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    return {'open_interest': 0, 'funding_rate': 0}
+        
+        return {'open_interest': 0, 'funding_rate': 0}
     
     def format_market_data(self, symbol: str, short_interval: str, long_interval: str, 
                           kline_limit: int = 100) -> str:
