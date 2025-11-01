@@ -53,10 +53,22 @@ class TradingExecutor:
             r = requests.get(url, params={'symbol': symbol}, timeout=15)
             r.raise_for_status()
             data = r.json()
+            # 如果返回的是错误结构，直接失败
+            if isinstance(data, dict) and 'code' in data and str(data.get('code')) != '0':
+                print(f"获取交易规则失败 {symbol}: {data}")
+                return None
             symbols = data.get('symbols', [])
             if not symbols:
                 return None
-            info = symbols[0]
+            # 找到与请求完全匹配的交易对
+            info = None
+            for s in symbols:
+                if s.get('symbol') == symbol:
+                    info = s
+                    break
+            if not info:
+                print(f"交易对不存在或未匹配: {symbol}")
+                return None
             # 提取常用过滤器
             filters = {f['filterType']: f for f in info.get('filters', [])}
             info['filters_map'] = filters
