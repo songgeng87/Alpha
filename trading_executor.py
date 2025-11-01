@@ -618,13 +618,6 @@ class TradingExecutor:
 
         # 内存有仓位信息，按记录平仓
         
-        # 取消止损单
-        if position.get('stop_order_id'):
-            self.cancel_order(symbol, position['stop_order_id'])
-        else:
-            # 防御性清理，确保没有残留止损
-            self.cancel_all_stop_loss_orders(symbol)
-        
         # 是否为部分减仓
         reduce_percent = trade.get('reduce_percent')
         is_partial = False
@@ -643,11 +636,19 @@ class TradingExecutor:
         else:
             quantity = position['quantity']
 
+        # 仅全量平仓时取消止损单，部分减仓时保留止损单
+        if not is_partial:
+            if position.get('stop_order_id'):
+                self.cancel_order(symbol, position['stop_order_id'])
+            else:
+                # 防御性清理，确保没有残留止损
+                self.cancel_all_stop_loss_orders(symbol)
+
         # 平仓/减仓
         direction = position['direction']
         side = 'SELL' if direction == 'LONG' else 'BUY'
         order = self.place_market_order(symbol, side, quantity, reduce_only=True)
-        
+
         if order:
             if is_partial:
                 # 更新本地持仓数量
@@ -658,7 +659,7 @@ class TradingExecutor:
                 # 从活跃仓位中移除
                 del self.active_positions[symbol]
             return True
-        
+
         return False
     
     def execute_trades(self, trades: List[Dict], available_cash: float) -> Dict:

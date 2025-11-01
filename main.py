@@ -143,6 +143,9 @@ class TradingSystem:
         Returns:
             周期执行结果
         """
+        # 每轮都重新加载配置，确保币对组等变更即时生效
+        self.config = self._load_config()
+        # 相关模块如有依赖也可在此处刷新（如有必要，可扩展）
         print("\n" + "="*80)
         print(f"开始交易周期 #{self.invocation_count + 1}")
         print(f"时间: {datetime.now()}")

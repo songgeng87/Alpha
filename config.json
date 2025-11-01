@@ -1,7 +1,7 @@
 {
     "trading_pairs": [
         {
-            "symbol": "BTCUSDT",
+            "symbol": "DASHUSDT",
             "short_interval": "3m",
             "long_interval": "4h",
             "kline_limit": 1000
