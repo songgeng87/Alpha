@@ -225,6 +225,16 @@ class TradingSystem:
                     print(f"  方向: {trade.get('direction', 'N/A')}")
                     print(f"  杠杆: {trade.get('leverage', 'N/A')}")
                     print(f"  仓位大小: {trade.get('position_size_percent', 0)*100:.1f}%")
+                    if 'max_margin_usdt' in trade and trade.get('max_margin_usdt') is not None:
+                        try:
+                            print(f"  最大保证金: {float(trade.get('max_margin_usdt')):.2f} USDT")
+                        except Exception:
+                            print(f"  最大保证金: {trade.get('max_margin_usdt')} (无法解析为数值)")
+                    if 'reduce_percent' in trade and trade.get('reduce_percent') is not None:
+                        try:
+                            print(f"  减仓比例: {float(trade.get('reduce_percent'))*100:.1f}%")
+                        except Exception:
+                            print(f"  减仓比例: {trade.get('reduce_percent')} (无法解析为数值)")
                     print(f"  信心度: {trade.get('confidence', 0):.2f}")
                     print(f"  理由: {trade.get('reason', 'N/A')}")
                 

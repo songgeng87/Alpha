@@ -518,6 +518,16 @@ class TradingExecutor:
         
         # 计算仓位大小
         position_value = available_cash * position_size_percent * leverage
+        # 如果AI提供了最大保证金上限，则限制本次使用的保证金（从而限制仓位名义价值）
+        try:
+            max_margin_usdt = float(trade.get('max_margin_usdt', 0) or 0)
+        except Exception:
+            max_margin_usdt = 0.0
+        if max_margin_usdt and max_margin_usdt > 0:
+            cap_position_value = max_margin_usdt * leverage
+            if position_value > cap_position_value:
+                print(f"按AI限制收缩仓位: 原名义={position_value:.4f} → 限制后={cap_position_value:.4f} (max_margin_usdt={max_margin_usdt}, leverage={leverage})")
+                position_value = cap_position_value
         
         # 获取当前价格来计算数量
         # 这里简化处理，实际应该获取最新价格
@@ -564,7 +574,7 @@ class TradingExecutor:
         """
         symbol = trade['symbol']
         
-        # 先尝试使用内存中的仓位；没有则回落到交易所查询（无状态平仓）
+        # 先尝试使用内存中的仓位；没有则回落到交易所查询（无状态平/减仓）
         position = self.active_positions.get(symbol)
         if not position:
             exch_pos = self.get_position_info(symbol)
@@ -580,14 +590,29 @@ class TradingExecutor:
                 print(f"没有 {symbol} 的活跃仓位（仓位数量为0）")
                 return False
             direction = 'LONG' if pos_amt > 0 else 'SHORT'
-            quantity = abs(pos_amt)
-            print(f"检测到交易所持仓: {symbol} {direction} 数量={quantity}，将进行无状态平仓（reduceOnly）")
+            # 检查是否部分减仓
+            reduce_percent = trade.get('reduce_percent')
+            is_partial = False
+            if reduce_percent is not None:
+                try:
+                    rp = float(reduce_percent)
+                    if rp > 0 and rp < 1:
+                        is_partial = True
+                        quantity = abs(pos_amt) * rp
+                    else:
+                        quantity = abs(pos_amt)
+                except Exception:
+                    quantity = abs(pos_amt)
+            else:
+                quantity = abs(pos_amt)
+            action_desc = "无状态减仓" if is_partial else "无状态平仓"
+            print(f"检测到交易所持仓: {symbol} {direction} 数量={abs(pos_amt)}，将进行{action_desc}（reduceOnly） 数量={quantity}")
             # 无内存止损单信息，防御性清理所有止损类订单
             self.cancel_all_stop_loss_orders(symbol)
             side = 'SELL' if direction == 'LONG' else 'BUY'
             order = self.place_market_order(symbol, side, quantity, reduce_only=True)
             if order:
-                # 无状态平仓完成，不涉及内存记录
+                # 无状态平/减仓完成，不涉及内存记录
                 return True
             return False
 
@@ -600,16 +625,38 @@ class TradingExecutor:
             # 防御性清理，确保没有残留止损
             self.cancel_all_stop_loss_orders(symbol)
         
-        # 平仓
+        # 是否为部分减仓
+        reduce_percent = trade.get('reduce_percent')
+        is_partial = False
+        if reduce_percent is not None:
+            try:
+                rp = float(reduce_percent)
+                if rp > 0 and rp < 1:
+                    is_partial = True
+                    quantity = position['quantity'] * rp
+                    print(f"执行部分减仓: {symbol} 减仓比例={rp:.4f}, 数量={quantity:.8f}")
+                else:
+                    # >=1 视为全量
+                    quantity = position['quantity']
+            except Exception:
+                quantity = position['quantity']
+        else:
+            quantity = position['quantity']
+
+        # 平仓/减仓
         direction = position['direction']
-        quantity = position['quantity']
         side = 'SELL' if direction == 'LONG' else 'BUY'
-        
         order = self.place_market_order(symbol, side, quantity, reduce_only=True)
         
         if order:
-            # 从活跃仓位中移除
-            del self.active_positions[symbol]
+            if is_partial:
+                # 更新本地持仓数量
+                new_qty = max(0.0, position['quantity'] - quantity)
+                self.active_positions[symbol]['quantity'] = new_qty
+                print(f"部分减仓完成: {symbol} 剩余数量={new_qty:.8f}")
+            else:
+                # 从活跃仓位中移除
+                del self.active_positions[symbol]
             return True
         
         return False
