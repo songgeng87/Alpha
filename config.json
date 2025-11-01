@@ -5,6 +5,30 @@
             "short_interval": "3m",
             "long_interval": "4h",
             "kline_limit": 1000
+        },
+        {
+            "symbol": "ETHUSDT",
+            "short_interval": "3m",
+            "long_interval": "4h",
+            "kline_limit": 1000
+        },
+        {
+            "symbol": "SOLUSDT",
+            "short_interval": "3m",
+            "long_interval": "4h",
+            "kline_limit": 1000
+        },
+        {
+            "symbol": "XRPUSDT",
+            "short_interval": "3m",
+            "long_interval": "4h",
+            "kline_limit": 1000
+        },
+        {
+            "symbol": "ZENUSDT",
+            "short_interval": "3m",
+            "long_interval": "4h",
+            "kline_limit": 1000
         }
     ],
     "ai_models": [
