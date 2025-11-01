@@ -1,0 +1,19 @@
+# Ignore Python cache
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+.envrc
+
+# Local environment variables
+.env
+
+# OS files
+.DS_Store
+
+/prompts/
+# Ignore invocation count file
+invocation_count.txt    
+work.md
+arena.md

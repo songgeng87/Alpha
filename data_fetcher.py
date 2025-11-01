@@ -5,22 +5,31 @@
 import requests
 import talib
 import numpy as np
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 from datetime import datetime
+import time
+import hmac
+import hashlib
+from urllib.parse import urlencode
+import os
 
 
 class DataFetcher:
     """数据获取类，负责获取市场数据和账户数据"""
     
-    def __init__(self, exchange_config: Dict):
+    def __init__(self, exchange_config: Dict, skip_latest_candle: bool = False):
         """
         初始化数据获取器
         
         Args:
             exchange_config: 交易所配置信息
+            skip_latest_candle: 是否跳过最新一根K线进行计算与输出
         """
-        self.api_key = exchange_config.get('api_key')
-        self.api_secret = exchange_config.get('api_secret')
+        # 优先从环境变量读取密钥，其次从配置读取
+        api_key_env = exchange_config.get('api_key_env', 'EXCHANGE_API_KEY')
+        api_secret_env = exchange_config.get('api_secret_env', 'EXCHANGE_API_SECRET')
+        self.api_key = os.getenv(api_key_env) or exchange_config.get('api_key')
+        self.api_secret = os.getenv(api_secret_env) or exchange_config.get('api_secret')
         self.testnet = exchange_config.get('testnet', True)
         
         # 根据是否测试网设置基础URL（此处以币安为例）
@@ -28,6 +37,58 @@ class DataFetcher:
             self.base_url = "https://testnet.binancefuture.com"
         else:
             self.base_url = "https://fapi.binance.com"
+        
+        # 数据计算选项
+        self.skip_latest_candle = bool(skip_latest_candle)
+
+    # ======================
+    # 认证/签名相关工具方法
+    # ======================
+    def _generate_signature(self, params: Dict) -> str:
+        """生成HMAC SHA256签名"""
+        query_string = urlencode(params)
+        signature = hmac.new(
+            self.api_secret.encode('utf-8'),
+            query_string.encode('utf-8'),
+            hashlib.sha256
+        ).hexdigest()
+        return signature
+
+    def _send_signed_request(self, method: str, endpoint: str, params: Dict) -> Dict:
+        """发送需要签名的请求（期货USDT-M）"""
+        if not self.api_key or not self.api_secret:
+            print("缺少交易所API凭证，无法调用签名接口。请设置环境变量 EXCHANGE_API_KEY 与 EXCHANGE_API_SECRET。")
+            return {"code": -1, "msg": "MISSING_API_CREDENTIALS"}
+        if params is None:
+            params = {}
+        # 默认添加较大的 recvWindow 提高容错
+        if 'recvWindow' not in params:
+            params['recvWindow'] = 5000
+        params['timestamp'] = int(time.time() * 1000)
+        params['signature'] = self._generate_signature(params)
+
+        headers = {
+            'X-MBX-APIKEY': self.api_key
+        }
+
+        url = f"{self.base_url}{endpoint}"
+        try:
+            if method == 'GET':
+                r = requests.get(url, params=params, headers=headers, timeout=10)
+            elif method == 'POST':
+                r = requests.post(url, params=params, headers=headers, timeout=10)
+            elif method == 'DELETE':
+                r = requests.delete(url, params=params, headers=headers, timeout=10)
+            else:
+                raise ValueError(f"Unsupported HTTP method: {method}")
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            print(f"签名请求失败 [{method} {endpoint}]: {e}")
+            try:
+                return r.json()  # 尝试返回错误JSON，便于定位问题
+            except Exception:
+                return {"error": str(e)}
     
     def get_klines(self, symbol: str, interval: str, limit: int = 100) -> List[Dict]:
         """
@@ -185,15 +246,19 @@ class DataFetcher:
         if not long_klines:
             return f"无法获取{symbol}的长期数据"
         
+        # 根据开关决定是否跳过最新K线
+        effective_short_klines = short_klines[:-1] if self.skip_latest_candle and len(short_klines) > 1 else short_klines
+        effective_long_klines = long_klines[:-1] if self.skip_latest_candle and len(long_klines) > 1 else long_klines
+        
         # 计算指标
-        short_indicators = self.calculate_indicators(short_klines, is_short_term=True)
-        long_indicators = self.calculate_indicators(long_klines, is_short_term=False)
+        short_indicators = self.calculate_indicators(effective_short_klines, is_short_term=True)
+        long_indicators = self.calculate_indicators(effective_long_klines, is_short_term=False)
         
         # 获取持仓量和资金费率
         oi_funding = self.get_open_interest_and_funding(symbol)
         
         # 获取最新价格
-        current_price = short_klines[-1]['close']
+        current_price = effective_short_klines[-1]['close']
         
         # 格式化输出
         output = f"\n{'='*60}\n"
@@ -213,7 +278,7 @@ class DataFetcher:
         # 短期指标（最近10个数据点）
         output += f"Intraday series ({short_interval}, oldest → latest):\n\n"
         
-        mid_prices = [k['close'] for k in short_klines[-10:]]
+        mid_prices = [k['close'] for k in effective_short_klines[-10:]]
         output += f"Mid prices: {mid_prices}\n\n"
         
         ema_20_recent = [f"{x:.3f}" for x in short_indicators['ema_20'][-10:]]
@@ -237,7 +302,7 @@ class DataFetcher:
         output += f"3‑Period ATR: {long_indicators['atr_3'][-1]:.2f} "
         output += f"vs. 14‑Period ATR: {long_indicators['atr_14'][-1]:.3f}\n\n"
         
-        current_volume = long_klines[-1]['volume']
+        current_volume = effective_long_klines[-1]['volume']
         avg_volume = np.mean(long_indicators['volumes'][-20:])
         output += f"Current Volume: {current_volume:.3f} vs. Average Volume: {avg_volume:.3f}\n\n"
         
@@ -249,28 +314,109 @@ class DataFetcher:
         
         return output
     
-    def get_account_data(self) -> Dict:
+    def get_account_data(self, initial_capital: Optional[float] = None) -> Dict:
         """
         获取账户数据（需要实现API认证）
         
         Returns:
             账户信息字典
         """
-        # 这里需要实现实际的API调用，包括签名等
-        # 以下是示例数据结构
+        # 实现：
+        # - /fapi/v2/account 获取余额、可用资金等
+        # - /fapi/v2/positionRisk 获取逐仓/全仓的持仓信息
         try:
-            # TODO: 实现实际的API调用
-            # 这里返回模拟数据作为示例
+            # 1) 账户信息
+            account_endpoint = "/fapi/v2/account"
+            account_resp = self._send_signed_request('GET', account_endpoint, {})
+
+            if isinstance(account_resp, dict) and account_resp.get('code'):
+                # 交易所返回了错误码
+                print(f"获取账户信息出错: {account_resp}")
+                return {
+                    'total_return_percent': 0.0,
+                    'available_cash': 0.0,
+                    'account_value': 0.0,
+                    'positions': [],
+                    'error': account_resp
+                }
+
+            total_wallet_balance = float(account_resp.get('totalWalletBalance', 0.0))
+            total_unrealized = float(account_resp.get('totalUnrealizedProfit', 0.0))
+            total_margin_balance = float(account_resp.get('totalMarginBalance', 0.0))
+
+            # 可用资金（USDT-M常用）：availableBalance 字段
+            available_cash = 0.0
+            for asset in account_resp.get('assets', []):
+                if asset.get('asset') in ('USDT', 'BUSD', 'USDC'):
+                    # 以USDT优先
+                    if asset.get('asset') == 'USDT':
+                        available_cash = float(asset.get('availableBalance', 0.0))
+                        break
+                    available_cash = float(asset.get('availableBalance', 0.0))
+
+            # 账户价值：使用 totalMarginBalance 更贴近权益
+            account_value = total_margin_balance if total_margin_balance > 0 else total_wallet_balance + total_unrealized
+
+            # 2) 持仓信息
+            pos_endpoint = "/fapi/v2/positionRisk"
+            pos_resp = self._send_signed_request('GET', pos_endpoint, {})
+
+            positions = []
+            if isinstance(pos_resp, list):
+                for p in pos_resp:
+                    try:
+                        amt = float(p.get('positionAmt', 0.0))
+                        if abs(amt) < 1e-10:
+                            continue  # 跳过空仓
+                        symbol = p.get('symbol')
+                        entry_price = float(p.get('entryPrice', 0.0))
+                        mark_price = float(p.get('markPrice', 0.0))
+                        liq_price = float(p.get('liquidationPrice', 0.0))
+                        unrealized_pnl = float(p.get('unRealizedProfit', 0.0))
+                        leverage = int(float(p.get('leverage', 0))) if p.get('leverage') else 0
+
+                        position = {
+                            'symbol': symbol,
+                            'quantity': abs(amt),
+                            'entry_price': entry_price,
+                            'current_price': mark_price,
+                            'liquidation_price': liq_price,
+                            'unrealized_pnl': unrealized_pnl,
+                            'leverage': leverage,
+                            'direction': 'LONG' if amt > 0 else 'SHORT',
+                            'notional_usd': abs(amt * mark_price)
+                        }
+                        positions.append(position)
+                    except Exception:
+                        continue
+            else:
+                # 可能返回错误信息
+                print(f"获取持仓信息出错: {pos_resp}")
+
+            # 收益率（无法精确计算初始本金，这里暂置0或由外部维护基线）
+            # 收益率计算
+            if initial_capital and initial_capital > 0:
+                total_return_percent = (account_value - initial_capital) / initial_capital * 100.0
+            else:
+                total_return_percent = 0.0
+
             account_data = {
+                'total_return_percent': total_return_percent,
+                'available_cash': available_cash,
+                'account_value': account_value,
+                'positions': positions
+            }
+            return account_data
+
+        except Exception as e:
+            print(f"获取账户数据失败: {e}")
+            return {
                 'total_return_percent': 0.0,
                 'available_cash': 0.0,
                 'account_value': 0.0,
-                'positions': []
+                'positions': [],
+                'error': str(e)
             }
-            return account_data
-        except Exception as e:
-            print(f"获取账户数据失败: {e}")
-            return {}
     
     def format_account_data(self, account_data: Dict) -> str:
         """

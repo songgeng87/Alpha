@@ -11,6 +11,15 @@ from typing import Dict, Optional
 from data_fetcher import DataFetcher
 from ai_decision import AIDecision
 from trading_executor import TradingExecutor
+from dotenv import load_dotenv
+from pathlib import Path as _Path
+
+# 在程序启动时加载 .env（如果存在）；显式指定路径以避免某些环境下的查找问题
+try:
+    _env_path = _Path(__file__).resolve().parent / '.env'
+    load_dotenv(dotenv_path=_env_path, override=False)
+except Exception as _e:
+    print(f"加载 .env 失败（忽略继续）: {_e}")
 
 
 class TradingSystem:
@@ -34,7 +43,10 @@ class TradingSystem:
         )
         
         # 初始化各模块
-        self.data_fetcher = DataFetcher(self.config['exchange'])
+        self.data_fetcher = DataFetcher(
+            self.config['exchange'],
+            skip_latest_candle=self.config.get('data_settings', {}).get('skip_latest_candle', False)
+        )
         self.ai_decision = AIDecision(
             self.config['ai_models'],
             prompt_dir='prompts'
@@ -152,7 +164,12 @@ class TradingSystem:
         
         # 2. 获取账户数据
         print("\n步骤 2: 获取账户数据...")
-        account_data_dict = self.data_fetcher.get_account_data()
+        initial_capital = None
+        try:
+            initial_capital = float(self.config.get('performance', {}).get('initial_capital'))
+        except Exception:
+            initial_capital = None
+        account_data_dict = self.data_fetcher.get_account_data(initial_capital=initial_capital)
         account_data = self.data_fetcher.format_account_data(account_data_dict)
         available_cash = account_data_dict.get('available_cash', 0)
         

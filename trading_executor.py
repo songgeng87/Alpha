@@ -8,6 +8,7 @@ import hmac
 import hashlib
 from typing import Dict, List, Optional
 from urllib.parse import urlencode
+import os
 
 
 class TradingExecutor:
@@ -21,8 +22,11 @@ class TradingExecutor:
             exchange_config: 交易所配置
             confidence_threshold: 信心阈值，低于此值的交易不执行
         """
-        self.api_key = exchange_config.get('api_key')
-        self.api_secret = exchange_config.get('api_secret')
+        # 优先环境变量，其次配置
+        api_key_env = exchange_config.get('api_key_env', 'EXCHANGE_API_KEY')
+        api_secret_env = exchange_config.get('api_secret_env', 'EXCHANGE_API_SECRET')
+        self.api_key = os.getenv(api_key_env) or exchange_config.get('api_key')
+        self.api_secret = os.getenv(api_secret_env) or exchange_config.get('api_secret')
         self.testnet = exchange_config.get('testnet', True)
         self.confidence_threshold = confidence_threshold
         
@@ -65,6 +69,13 @@ class TradingExecutor:
         Returns:
             响应数据
         """
+        if not self.api_key or not self.api_secret:
+            print("缺少交易所API凭证，无法执行签名请求。请设置环境变量 EXCHANGE_API_KEY 与 EXCHANGE_API_SECRET。")
+            return None
+        if params is None:
+            params = {}
+        if 'recvWindow' not in params:
+            params['recvWindow'] = 5000
         params['timestamp'] = int(time.time() * 1000)
         params['signature'] = self._generate_signature(params)
         

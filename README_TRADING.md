@@ -80,9 +80,9 @@ sudo make install
 pip install -r requirements.txt
 ```
 
-### 2. 配置系统
+### 2. 配置系统与环境变量
 
-编辑 `config.json` 文件：
+编辑 `config.json` 文件（密钥不再写在此处，由环境变量提供）：
 
 ```json
 {
@@ -94,19 +94,22 @@ pip install -r requirements.txt
             "kline_limit": 100
         }
     ],
-    "ai_models": [
-        {
-            "name": "GPT-4",
-            "api_url": "https://api.openai.com/v1/chat/completions",
-            "api_key": "YOUR_API_KEY_HERE",
-            "model": "gpt-4"
-        }
-    ],
-    "exchange": {
-        "api_key": "YOUR_EXCHANGE_API_KEY",
-        "api_secret": "YOUR_EXCHANGE_API_SECRET",
-        "testnet": true
-    },
+   "ai_models": [
+      {
+         "name": "DeepSeek",
+         "api_url": "https://api.deepseek.com/v1/chat/completions",
+         "api_key": "",
+         "api_key_env": "DEEPSEEK_API_KEY",
+         "model": "deepseek-chat"
+      }
+   ],
+   "exchange": {
+      "api_key": "",
+      "api_secret": "",
+      "api_key_env": "EXCHANGE_API_KEY",
+      "api_secret_env": "EXCHANGE_API_SECRET",
+      "testnet": true
+   },
     "trading_settings": {
         "confidence_threshold": 0.6,
         "max_positions": 3,
@@ -114,6 +117,36 @@ pip install -r requirements.txt
         "position_size_range": [0.05, 0.10]
     }
 }
+### 3. 数据设置：是否跳过最新K线
+
+在某些交易所或行情源中，最新一根K线可能尚未收盘，数值不稳定。你可以在 `config.json` 中启用开关以避免使用最新一根K线：
+
+```json
+{
+   "data_settings": {
+      "skip_latest_candle": true
+   }
+}
+```
+
+启用后，系统进行指标计算与“当前价/序列展示”时，将使用倒数第二根K线作为“最新”数据来源。
+
+
+然后使用 `.env` 管理密钥（不要把 `.env` 提交到仓库）：
+
+1) 复制示例文件
+```bash
+cp .env.example .env
+```
+
+2) 填写你的密钥到 `.env`：
+```env
+EXCHANGE_API_KEY=你的交易所Key
+EXCHANGE_API_SECRET=你的交易所Secret
+DEEPSEEK_API_KEY=你的DeepSeekKey
+```
+
+3) 程序启动时会自动加载 `.env`（main.py 中已调用 load_dotenv）。
 ```
 
 **重要配置项说明：**

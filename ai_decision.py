@@ -6,6 +6,7 @@ import requests
 import json
 from typing import Dict, List, Optional
 from pathlib import Path
+import os
 
 
 class AIDecision:
@@ -76,7 +77,10 @@ class AIDecision:
             AI返回的交易建议（JSON格式）
         """
         api_url = ai_config['api_url']
-        api_key = ai_config['api_key']
+        # 优先环境变量
+        api_key = ai_config.get('api_key')
+        if ai_config.get('api_key_env'):
+            api_key = os.getenv(ai_config['api_key_env']) or api_key
         model = ai_config['model']
         ai_name = ai_config['name']
         
@@ -94,7 +98,8 @@ class AIDecision:
             'temperature': 0.7,
             'max_tokens': 2000
         }
-        
+        print(f"系统提示词: {system_prompt}")
+        print(f"用户提示词: {user_prompt}")
         try:
             print(f"\n正在查询 {ai_name}...")
             response = requests.post(api_url, headers=headers, json=payload, timeout=60)
@@ -116,6 +121,7 @@ class AIDecision:
             
             decision = json.loads(content)
             print(f"{ai_name} 返回建议成功")
+            print(f"返回内容: {content}")
             return decision
             
         except json.JSONDecodeError as e:
