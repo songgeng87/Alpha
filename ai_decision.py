@@ -8,6 +8,7 @@ import time
 from typing import Dict, List, Optional
 from pathlib import Path
 import os
+from datetime import datetime
 
 
 class AIDecision:
@@ -27,6 +28,10 @@ class AIDecision:
         # 加载提示词模板
         self.user_instruction = self._load_prompt("user_instruction.txt")
         self.suffix = self._load_prompt("suffix.txt")
+        
+        # 创建AI交互历史目录
+        self.history_dir = Path("ai_history")
+        self.history_dir.mkdir(exist_ok=True)
     
     def _load_prompt(self, filename: str) -> str:
         """
@@ -45,6 +50,38 @@ class AIDecision:
         except Exception as e:
             print(f"加载提示词文件失败 {filename}: {e}")
             return ""
+    
+    def _save_ai_interaction(self, model_name: str, system_prompt: str, 
+                            user_prompt: str, ai_response: str, success: bool = True):
+        """
+        保存AI交互历史
+        
+        Args:
+            model_name: AI模型名称
+            system_prompt: 系统提示词
+            user_prompt: 用户提示词
+            ai_response: AI回答
+            success: 是否成功获取回答
+        """
+        try:
+            timestamp = datetime.now()
+            filename = timestamp.strftime("%Y%m%d_%H%M%S") + f"_{model_name}.json"
+            filepath = self.history_dir / filename
+            
+            interaction_data = {
+                "timestamp": timestamp.isoformat(),
+                "model_name": model_name,
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+                "ai_response": ai_response,
+                "success": success
+            }
+            
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(interaction_data, f, ensure_ascii=False, indent=2)
+                
+        except Exception as e:
+            print(f"保存AI交互历史失败: {e}")
     
     def build_prompt(self, prefix: str, market_data: str, account_data: str) -> str:
         """
@@ -77,6 +114,8 @@ class AIDecision:
             
         url = model_config["url"]
         model = model_config["model"]
+        model_name = model_config.get("name", model)
+        
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}"
@@ -85,7 +124,7 @@ class AIDecision:
         data = {
             "model": model,
             "messages": [
-                {"role": "system", "content": self.system_prompt},
+                {"role": "system", "content": self.user_instruction},
                 {"role": "user", "content": prompt}
             ],
             "stream": False
@@ -102,35 +141,79 @@ class AIDecision:
                 result = response.json()
                 
                 if "choices" in result and len(result["choices"]) > 0:
-                    return result["choices"][0]["message"]["content"]
+                    ai_response = result["choices"][0]["message"]["content"]
+                    # 保存成功的交互历史
+                    self._save_ai_interaction(
+                        model_name=model_name,
+                        system_prompt=self.user_instruction,
+                        user_prompt=prompt,
+                        ai_response=ai_response,
+                        success=True
+                    )
+                    return ai_response
                 else:
-                    print(f"AI响应格式异常 [{model_config.get('name')}]: {result}")
+                    print(f"AI响应格式异常 [{model_name}]: {result}")
+                    self._save_ai_interaction(
+                        model_name=model_name,
+                        system_prompt=self.user_instruction,
+                        user_prompt=prompt,
+                        ai_response=json.dumps(result),
+                        success=False
+                    )
                     return "{}"
                     
             except requests.exceptions.Timeout:
-                print(f"AI查询超时 [{model_config.get('name')}] (尝试 {attempt + 1}/{max_retries})")
+                print(f"AI查询超时 [{model_name}] (尝试 {attempt + 1}/{max_retries})")
                 if attempt < max_retries - 1:
                     time.sleep(retry_delay)
                     retry_delay *= 2  # 指数退避
                     continue
                 else:
+                    self._save_ai_interaction(
+                        model_name=model_name,
+                        system_prompt=self.user_instruction,
+                        user_prompt=prompt,
+                        ai_response="TIMEOUT_ERROR",
+                        success=False
+                    )
                     return "{}"
                     
             except requests.exceptions.RequestException as e:
-                print(f"AI查询网络错误 [{model_config.get('name')}] (尝试 {attempt + 1}/{max_retries}): {e}")
+                print(f"AI查询网络错误 [{model_name}] (尝试 {attempt + 1}/{max_retries}): {e}")
                 if attempt < max_retries - 1:
                     time.sleep(retry_delay)
                     retry_delay *= 2
                     continue
                 else:
+                    self._save_ai_interaction(
+                        model_name=model_name,
+                        system_prompt=self.user_instruction,
+                        user_prompt=prompt,
+                        ai_response=f"NETWORK_ERROR: {str(e)}",
+                        success=False
+                    )
                     return "{}"
                     
             except json.JSONDecodeError as e:
-                print(f"AI响应JSON解析失败 [{model_config.get('name')}]: {e}")
+                print(f"AI响应JSON解析失败 [{model_name}]: {e}")
+                self._save_ai_interaction(
+                    model_name=model_name,
+                    system_prompt=self.user_instruction,
+                    user_prompt=prompt,
+                    ai_response=f"JSON_DECODE_ERROR: {str(e)}",
+                    success=False
+                )
                 return "{}"
                 
             except Exception as e:
-                print(f"AI查询失败 [{model_config.get('name')}]: {e}")
+                print(f"AI查询失败 [{model_name}]: {e}")
+                self._save_ai_interaction(
+                    model_name=model_name,
+                    system_prompt=self.user_instruction,
+                    user_prompt=prompt,
+                    ai_response=f"UNKNOWN_ERROR: {str(e)}",
+                    success=False
+                )
                 return "{}"
         
         return "{}"

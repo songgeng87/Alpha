@@ -21,3 +21,6 @@ arena.md
 # Trading process management
 trading.pid
 logs/
+
+# AI interaction history
+ai_history/
