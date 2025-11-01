@@ -81,8 +81,12 @@ class TradingExecutor:
         fmt = f"{{:.{precision}f}}"
         return float(fmt.format(value))
 
-    def _normalize_quantity(self, symbol: str, qty: float, price: float) -> float:
-        """根据交易规则规范化下单数量，满足步长、最小数量、最小名义金额等"""
+    def _normalize_quantity(self, symbol: str, qty: float, price: float, order_type: str = 'LIMIT') -> float:
+        """根据交易规则规范化下单数量，满足步长、最小数量、最小名义金额等。
+
+        注意：期货下单存在 LOT_SIZE 与 MARKET_LOT_SIZE 两套过滤器，
+        市价单应优先使用 MARKET_LOT_SIZE 的 stepSize/minQty 规则。
+        """
         original_qty = qty
         info = self._get_symbol_info(symbol)
         if not info:
@@ -90,10 +94,14 @@ class TradingExecutor:
             return qty
         filters = info.get('filters_map', {})
 
-        # LOT_SIZE: minQty, stepSize
-        lot = filters.get('LOT_SIZE') or {}
-        min_qty = float(lot.get('minQty', '0')) if lot else 0.0
-        step_size = float(lot.get('stepSize', '0')) if lot else 0.0
+        # 选择合适的数量过滤器
+        lot_filter_name = 'LOT_SIZE'
+        if (order_type or '').upper() == 'MARKET' and 'MARKET_LOT_SIZE' in filters:
+            lot_filter_name = 'MARKET_LOT_SIZE'
+
+        lot = filters.get(lot_filter_name) or {}
+        min_qty = float(lot.get('minQty', lot.get('minQty', '0'))) if lot else 0.0
+        step_size = float(lot.get('stepSize', lot.get('stepSize', '0'))) if lot else 0.0
 
         # 处理步长
         if step_size and step_size > 0:
@@ -103,9 +111,17 @@ class TradingExecutor:
         if min_qty and qty < min_qty:
             qty = min_qty
 
-        # MIN_NOTIONAL: 名义金额最小值（期货为 notional）
-        min_notional_filter = filters.get('MIN_NOTIONAL') or {}
-        min_notional = float(min_notional_filter.get('notional', '0')) if min_notional_filter else 0.0
+        # 最小名义金额（有的为 MIN_NOTIONAL.notional，有的为 NOTIONAL.minNotional）
+        min_notional_filter = filters.get('MIN_NOTIONAL') or filters.get('NOTIONAL') or {}
+        min_notional_value = (
+            min_notional_filter.get('notional')
+            if 'notional' in min_notional_filter
+            else min_notional_filter.get('minNotional', '0')
+        )
+        try:
+            min_notional = float(min_notional_value or 0)
+        except Exception:
+            min_notional = 0.0
         notional = qty * price if price else 0.0
         if min_notional and notional < min_notional and price:
             # 向上调整到满足最小名义金额，再按步长取整
@@ -122,7 +138,7 @@ class TradingExecutor:
 
         # 打印规范化信息
         if abs(original_qty - qty) > 0.0001:
-            print(f"数量规范化: {symbol} {original_qty:.8f} → {qty} (步长={step_size}, 精度={q_prec})")
+            print(f"数量规范化: {symbol} {original_qty:.8f} → {qty} (过滤器={lot_filter_name}, 步长={step_size}, 精度={q_prec})")
         
         return qty
 
@@ -266,6 +282,10 @@ class TradingExecutor:
         Returns:
             是否成功
         """
+        # 先校验交易对是否有效
+        if not self._get_symbol_info(symbol):
+            print(f"无效或未知交易对: {symbol}，无法设置杠杆")
+            return False
         endpoint = "/fapi/v1/leverage"
         params = {
             'symbol': symbol,
@@ -292,6 +312,12 @@ class TradingExecutor:
         Returns:
             订单信息
         """
+        # 先校验交易对是否有效
+        info = self._get_symbol_info(symbol)
+        if not info:
+            print(f"无效或未知交易对: {symbol}，取消下单")
+            return None
+
         # 先按规则规范化数量
         # 获取最新价格用于名义金额判断：这里简化为通过标的最新价接口获取一次
         try:
@@ -300,8 +326,8 @@ class TradingExecutor:
             price = float(r.json().get('price', '0'))
         except Exception:
             price = 0.0
-        
-        norm_qty = self._normalize_quantity(symbol, float(quantity), price)
+
+        norm_qty = self._normalize_quantity(symbol, float(quantity), price, order_type='MARKET')
         if norm_qty <= 0:
             print(f"数量规范化后无效，取消下单: 原数量={quantity}, 规范化后={norm_qty}")
             return None
