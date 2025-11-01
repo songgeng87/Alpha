@@ -112,7 +112,12 @@ class AIDecision:
             print(f"缺少API Key，无法调用模型 {model_config.get('name', 'unknown')}")
             return "{}"
             
-        url = model_config["url"]
+        # 兼容 url 和 api_url 两种配置方式
+        url = model_config.get("url") or model_config.get("api_url")
+        if not url:
+            print(f"缺少API URL，无法调用模型 {model_config.get('name', 'unknown')}")
+            return "{}"
+            
         model = model_config["model"]
         model_name = model_config.get("name", model)
         
@@ -231,15 +236,29 @@ class AIDecision:
             所有AI的决策列表
         """
         user_prompt = self.build_prompt(prefix, market_data, account_data)
-        system_prompt = self.user_instruction
         
         all_decisions = []
         
         for ai_config in self.ai_models:
-            decision = self.query_ai(ai_config, system_prompt, user_prompt)
-            if decision:
-                decision['ai_name'] = ai_config['name']
-                all_decisions.append(decision)
+            response_str = self.query_ai(user_prompt, ai_config)
+            if response_str and response_str != "{}":
+                try:
+                    # 清理可能的markdown代码块标记
+                    cleaned_response = response_str.strip()
+                    if cleaned_response.startswith("```json"):
+                        cleaned_response = cleaned_response[7:]  # 移除开头的```json
+                    elif cleaned_response.startswith("```"):
+                        cleaned_response = cleaned_response[3:]  # 移除开头的```
+                    if cleaned_response.endswith("```"):
+                        cleaned_response = cleaned_response[:-3]  # 移除结尾的```
+                    cleaned_response = cleaned_response.strip()
+                    
+                    decision = json.loads(cleaned_response)
+                    decision['ai_name'] = ai_config['name']
+                    all_decisions.append(decision)
+                except json.JSONDecodeError as e:
+                    print(f"解析AI响应失败 [{ai_config.get('name')}]: {e}")
+                    print(f"响应内容: {response_str[:200]}")
         
         return all_decisions
     
