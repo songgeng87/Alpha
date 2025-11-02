@@ -299,7 +299,8 @@ class TradingSystem:
                     result = self.run_single_cycle()
                     
                     if result['status'] == 'success':
-                        print(f"\n周期完成，等待 {interval_minutes} 分钟...")
+                        print(f"\n周期完成,时间: {datetime.now()}，等待 {interval_minutes} 分钟...")
+        
                     else:
                         print(f"\n周期失败: {result.get('reason', 'unknown')}")
                     
