@@ -31,7 +31,7 @@
             "kline_limit": 1000
         },
         {
-            "symbol": "BNBUSDT",
+            "symbol": "DASHUSDT",
             "short_interval": "3m",
             "long_interval": "4h",
             "kline_limit": 1000

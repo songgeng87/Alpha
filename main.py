@@ -238,6 +238,10 @@ class TradingSystem:
                             print(f"  减仓比例: {float(trade.get('reduce_percent'))*100:.1f}%")
                         except Exception:
                             print(f"  减仓比例: {trade.get('reduce_percent')} (无法解析为数值)")
+                    if 'stop_loss' in trade and trade.get('stop_loss'):
+                        print(f"  止损价格: {trade.get('stop_loss')}")
+                    if 'take_profit' in trade and trade.get('take_profit'):
+                        print(f"  止盈价格: {trade.get('take_profit')}")
                     print(f"  信心度: {trade.get('confidence', 0):.2f}")
                     print(f"  理由: {trade.get('reason', 'N/A')}")
                 

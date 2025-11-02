@@ -317,8 +317,10 @@ class TradingExecutor:
                 'quantity': abs(amt),
                 'entry_price': entry_price,
                 'stop_loss': 0.0,
+                'take_profit': 0.0,
                 'leverage': leverage,
-                'stop_order_id': None
+                'stop_order_id': None,
+                'take_profit_order_id': None
             }
         # 清理本地已平仓的 symbol
         stale = set(self.active_positions) - set(new_positions)
@@ -442,6 +444,40 @@ class TradingExecutor:
             print(f"止损单设置失败: {symbol} {side} @ {norm_price}，返回: {result}")
             return None
     
+    def place_take_profit_order(self, symbol: str, side: str, quantity: float, 
+                                take_profit_price: float) -> Optional[Dict]:
+        """
+        下止盈单
+        
+        Args:
+            symbol: 交易对符号
+            side: 买卖方向（BUY/SELL）
+            quantity: 数量
+            take_profit_price: 止盈价格
+            
+        Returns:
+            订单信息
+        """
+        # 规范化止盈价格
+        norm_price = self._normalize_price(symbol, float(take_profit_price))
+        endpoint = "/fapi/v1/order"
+        params = {
+            'symbol': symbol,
+            'side': side,
+            'type': 'TAKE_PROFIT_MARKET',
+            'stopPrice': norm_price,
+            'closePosition': 'true'  # 直接平仓
+        }
+        
+        result = self._send_signed_request('POST', endpoint, params)
+        
+        if result and not self._is_error_response(result):
+            print(f"止盈单设置成功: {symbol} {side} @ {norm_price}")
+            return result
+        else:
+            print(f"止盈单设置失败: {symbol} {side} @ {norm_price}，返回: {result}")
+            return None
+    
     def cancel_order(self, symbol: str, order_id: int) -> bool:
         """
         取消订单
@@ -495,6 +531,34 @@ class TradingExecutor:
         
         return success
     
+    def cancel_all_conditional_orders(self, symbol: str) -> bool:
+        """
+        取消指定交易对的所有条件单（止损单和止盈单）
+        
+        Args:
+            symbol: 交易对符号
+            
+        Returns:
+            是否成功
+        """
+        # 获取所有未成交订单
+        endpoint = "/fapi/v1/openOrders"
+        params = {'symbol': symbol}
+        
+        orders = self._send_signed_request('GET', endpoint, params)
+        
+        if not orders or self._is_error_response(orders):
+            return True
+        
+        # 取消所有止损单和止盈单
+        success = True
+        for order in orders:
+            if order.get('type') in ['STOP_MARKET', 'STOP', 'TAKE_PROFIT_MARKET', 'TAKE_PROFIT']:
+                if not self.cancel_order(symbol, order['orderId']):
+                    success = False
+        
+        return success
+    
     def execute_open_position(self, trade: Dict, available_cash: float) -> bool:
         """
         执行开仓操作
@@ -511,6 +575,7 @@ class TradingExecutor:
         leverage = int(trade['leverage'])
         position_size_percent = trade['position_size_percent']
         stop_loss = trade['stop_loss']
+        take_profit = trade.get('take_profit', 0)
         
         # 设置杠杆
         if not self.set_leverage(symbol, leverage):
@@ -542,13 +607,18 @@ class TradingExecutor:
         side = 'BUY' if direction == 'LONG' else 'SELL'
         order = self.place_market_order(symbol, side, quantity)
         if not order:
-            # 确保没有残留的止损条件单（防御性清理）
-            self.cancel_all_stop_loss_orders(symbol)
+            # 确保没有残留的止损/止盈条件单（防御性清理）
+            self.cancel_all_conditional_orders(symbol)
             return False
         
         # 设置止损单
         stop_side = 'SELL' if direction == 'LONG' else 'BUY'
         stop_order = self.place_stop_loss_order(symbol, stop_side, quantity, stop_loss)
+        
+        # 设置止盈单（如果提供）
+        take_profit_order = None
+        if take_profit and take_profit > 0:
+            take_profit_order = self.place_take_profit_order(symbol, stop_side, quantity, take_profit)
         
         # 记录仓位信息
         self.active_positions[symbol] = {
@@ -556,8 +626,10 @@ class TradingExecutor:
             'quantity': quantity,
             'entry_price': entry_price,
             'stop_loss': stop_loss,
+            'take_profit': take_profit,
             'leverage': leverage,
-            'stop_order_id': stop_order['orderId'] if stop_order else None
+            'stop_order_id': stop_order['orderId'] if stop_order else None,
+            'take_profit_order_id': take_profit_order['orderId'] if take_profit_order else None
         }
         
         return True
@@ -607,8 +679,10 @@ class TradingExecutor:
                 quantity = abs(pos_amt)
             action_desc = "无状态减仓" if is_partial else "无状态平仓"
             print(f"检测到交易所持仓: {symbol} {direction} 数量={abs(pos_amt)}，将进行{action_desc}（reduceOnly） 数量={quantity}")
-            # 无内存止损单信息，防御性清理所有止损类订单
-            self.cancel_all_stop_loss_orders(symbol)
+            # 无内存止损单信息，防御性清理所有条件单（止损和止盈）
+            # 仅全量平仓时清理条件单，部分减仓保留
+            if not is_partial:
+                self.cancel_all_conditional_orders(symbol)
             side = 'SELL' if direction == 'LONG' else 'BUY'
             order = self.place_market_order(symbol, side, quantity, reduce_only=True)
             if order:
@@ -636,13 +710,14 @@ class TradingExecutor:
         else:
             quantity = position['quantity']
 
-        # 仅全量平仓时取消止损单，部分减仓时保留止损单
+        # 仅全量平仓时取消止损单和止盈单，部分减仓时保留
         if not is_partial:
             if position.get('stop_order_id'):
                 self.cancel_order(symbol, position['stop_order_id'])
-            else:
-                # 防御性清理，确保没有残留止损
-                self.cancel_all_stop_loss_orders(symbol)
+            if position.get('take_profit_order_id'):
+                self.cancel_order(symbol, position['take_profit_order_id'])
+            # 防御性清理，确保没有残留条件单
+            self.cancel_all_conditional_orders(symbol)
 
         # 平仓/减仓
         direction = position['direction']
